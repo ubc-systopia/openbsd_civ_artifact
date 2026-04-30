@@ -1,0 +1,143 @@
+diff -ruN -x .git ./dhcpd/src/usr.sbin/dhcpd/Makefile ./fuzz-dhcpd/src/usr.sbin/dhcpd/Makefile
+--- ./dhcpd/src/usr.sbin/dhcpd/Makefile	2026-04-04 13:59:36.307063000 -0700
++++ ./fuzz-dhcpd/src/usr.sbin/dhcpd/Makefile	2026-04-04 13:56:58.117677000 -0700
+@@ -9,10 +9,11 @@
+ PROG=	dhcpd
+ MAN=	dhcpd.8 dhcpd.conf.5 dhcpd.leases.5 dhcp-options.5
+ 
+-LDADD+=-lcrypto -lmd
+-CFLAGS+=-Wall -D__dead=''
++LDADD+=-lcrypto -lmd -lmsg_generator
++LDFLAGS+=-L$(BUFFER_CHECKER_ROOT)
++CFLAGS+=-Wall -D__dead='' -I$(BUFFER_CHECKER_ROOT)
+ 
+ .include <bsd.prog.mk>
+-CFLAGS+=-Wstrict-prototypes -Wmissing-prototypes
++CFLAGS+=-Wstrict-prototypes -Wmissing-prototypes -O0 -g
+ CFLAGS+=-Wmissing-declarations
+ CFLAGS+=-Wshadow -Wpointer-arith -Wcast-qual
+diff -ruN -x .git ./dhcpd/src/usr.sbin/dhcpd/dhcpd.c ./fuzz-dhcpd/src/usr.sbin/dhcpd/dhcpd.c
+--- ./dhcpd/src/usr.sbin/dhcpd/dhcpd.c	2026-04-04 13:59:36.935168000 -0700
++++ ./fuzz-dhcpd/src/usr.sbin/dhcpd/dhcpd.c	2026-04-03 23:05:39.118550000 -0700
+@@ -61,6 +61,7 @@
+ #include "dhcpd.h"
+ #include "log.h"
+ #include "sync.h"
++#include <msg_generator.h>
+ 
+ 
+ __dead void usage(void);
+@@ -223,7 +224,7 @@
+ 	if ((pw = getpwnam("_dhcp")) == NULL)
+ 		fatalx("user \"_dhcp\" not found");
+ 
+-#ifndef NO_PF
++#if 0
+ 	/* don't go near /dev/pf unless we actually intend to use it */
+ 	if ((abandoned_tab != NULL) ||
+ 	    (changedmac_tab != NULL) ||
+@@ -247,7 +248,66 @@
+ 			break;
+ 		}
+ 	}
+-#endif /* NO_PF */
++#endif /*GaNO_PF */
++
++
++	if (pipe(pfpipe) == -1)
++		fatal("pipe");
++
++
++	/* Initialize the message generator interface */
++	struct msg_interface iface;
++	char valid_types[] = {'A', 'C', 'L', 'R', 'K'};
++
++	/* Initialize with 1 compartment (pftable_handler) and 5 message types (A, C, L, R, K) */
++	if (msg_interface_init(&iface, STDIN_FILENO, 1, 5) != MSG_GEN_SUCCESS) {
++		fatalx("Failed to initialize message interface");
++	}
++
++	/* Default 1:1 message type mapping is used (0->0, 1->1, 2->2, 3->3, 4->4) */
++	/* This maps to valid_types indices: 0='A', 1='C', 2='L', 3='R', 4='K' */
++
++	/* Store the pipe fd as endpoint for compartment 0 (pftable_handler) */
++	msg_interface_set_endpoint(&iface, 0, (void *)(intptr_t)pfpipe[1]);
++
++	/* Generate and send messages */
++	struct msg_data msg;
++	int ret;
++	static int counter = 0;
++
++	while ((ret = msg_generate(&iface, &msg)) == MSG_GEN_SUCCESS) {
++		if (counter > 10)
++			break;
++		counter++;
++
++		/* Extract auxiliary data - first 4 bytes can be msg_id */
++		uint32_t msg_id = *(uint32_t *)&msg.aux_data[0];
++
++		/* Prepare payload with proper size for pf_cmd */
++		size_t send_size = sizeof(struct pf_cmd);
++
++		/* Set the type field in the pf_cmd structure */
++		if (msg.actual_payload_size >= sizeof(struct pf_cmd)) {
++			((struct pf_cmd *)msg.payload)->type = valid_types[msg.type];
++		}
++
++		printf("Fuzzing: sending msg_type=%d, size=%zu, id=%u to pftable_handler\n",
++		       msg.type, send_size, msg_id);
++
++		/* Write to pfpipe[1] */
++		atomicio(vwrite, pfpipe[1], msg.payload, send_size);
++	}
++
++	struct pf_cmd my_cmd;
++	my_cmd.type = 'G';
++	atomicio(vwrite, pfpipe[1], &my_cmd, sizeof(struct pf_cmd));
++
++
++	pftable_handler();
++	// send with pfpipe[1]
++	//
++
++
+ 
+ 	if (udpsockmode)
+ 		udpsock_startup(udpaddr);
+Binary files ./dhcpd/src/usr.sbin/dhcpd/dhcpd.core and ./fuzz-dhcpd/src/usr.sbin/dhcpd/dhcpd.core differ
+diff -ruN -x .git ./dhcpd/src/usr.sbin/dhcpd/pfutils.c ./fuzz-dhcpd/src/usr.sbin/dhcpd/pfutils.c
+--- ./dhcpd/src/usr.sbin/dhcpd/pfutils.c	2026-04-04 13:59:36.935887000 -0700
++++ ./fuzz-dhcpd/src/usr.sbin/dhcpd/pfutils.c	2026-04-03 23:05:39.119000000 -0700
+@@ -54,18 +54,22 @@
+ 	struct pollfd pfd[1];
+ 	int l, r, fd, nfds;
+ 
+-	if ((fd = open(_PATH_DEV_PF, O_RDWR|O_NOFOLLOW)) == -1)
++	if ((fd = open("/dev/pf", O_RDWR|O_NOFOLLOW)) == -1)
+ 		fatal("can't open pf device");
+ #ifndef __OpenBSD__
++	/*
+ 	if (chroot("/var/empty") == -1)
+ 		fatal("chroot /var/empty");
+ 	if (chdir("/") == -1)
+ 		fatal("chdir(\"/\")");
++	*/
+ #endif
++	/*
+ 	if (setgroups(1, &pw->pw_gid) ||
+ 	    setresgid(pw->pw_gid, pw->pw_gid, pw->pw_gid) ||
+ 	    setresuid(pw->pw_uid, pw->pw_uid, pw->pw_uid))
+ 		fatal("can't drop privileges");
++		*/
+ 
+ 	/* no filesystem visibility */
+ #ifdef __OpenBSD__
+@@ -135,6 +139,8 @@
+ 				 */
+ 				pf_change_table(fd, 0, cmd.ip, leased_tab);
+ 				break;
++			case 'G':
++				exit(1);
+ 			default:
+ 				break;
+ 			}

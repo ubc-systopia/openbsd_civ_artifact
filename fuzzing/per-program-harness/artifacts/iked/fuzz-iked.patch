@@ -1,0 +1,298 @@
+Only in iked: CMakeLists.txt
+Only in iked: Makefile
+Only in iked: apparmor.c
+Only in iked: apparmor.h
+Only in iked: ca.c
+Only in iked: chap_ms.c
+Only in iked: chap_ms.h
+Only in iked: config.c
+Only in iked: control.c
+Only in iked: crypto.c
+Only in iked: crypto_api.h
+Only in iked: crypto_hash.c
+Only in iked: dh.c
+Only in iked: dh.h
+Only in iked: eap.c
+Only in iked: eap.h
+Only in iked: genmap.sh
+Only in iked: iked.8
+diff -u iked/iked.c fuzz-iked/iked.c
+--- iked/iked.c	2025-10-15 21:35:44.609054000 +0000
++++ fuzz-iked/iked.c	2025-10-15 22:40:54.183847000 +0000
+@@ -62,6 +62,8 @@
+ int	 parent_configure(struct iked *);
+ 
+ struct iked	*iked_env;
++//FUZZ
++static int end_of_msgs_count = 0;
+ 
+ static struct privsep_proc procs[] = {
+ 	{ "ca",		PROC_CERT,	parent_dispatch_ca, caproc, IKED_CA },
+@@ -79,6 +81,53 @@
+ 	exit(1);
+ }
+ 
++int 
++get_metadata(uint8_t *compartment, uint32_t *type, uint32_t *id, pid_t *pid, size_t *datalen)
++{ 
++	ssize_t bytes_read; uint8_t
++		buf[sizeof(uint8_t) + sizeof(uint32_t) + sizeof(uint32_t) + sizeof(pid_t) + sizeof(size_t)]; 
++	size_t offset = 0;
++
++	bytes_read = read(STDIN_FILENO, buf, sizeof(buf)); 
++	if (bytes_read != sizeof(buf)) 
++		return (-1);
++
++	memcpy(compartment, buf + offset, sizeof(uint8_t)); 
++	offset += sizeof(uint8_t);
++
++	memcpy(type, buf + offset, sizeof(uint32_t)); 
++	offset += sizeof(uint32_t);
++
++	memcpy(id, buf + offset, sizeof(uint32_t)); 
++	offset += sizeof(uint32_t);
++
++	memcpy(pid, buf + offset, sizeof(pid_t)); 
++	offset += sizeof(pid_t);
++
++	memcpy(datalen, buf + offset, sizeof(size_t));
++
++	return 0; 
++}
++
++size_t
++get_payload(size_t datalen, char *buf)
++{
++	ssize_t bytes_read;
++	size_t total_read = 0;
++
++	while (total_read < datalen)
++	{
++		bytes_read = read(STDIN_FILENO, buf + total_read, datalen - total_read);
++		if (bytes_read <= 0)
++		{
++			break;
++		}
++		total_read += bytes_read;
++	}
++
++	return (total_read);
++}
++
+ int
+ main(int argc, char *argv[])
+ {
+@@ -238,7 +287,9 @@
+ 	log_procinit("parent");
+ 
+ 	event_init();
+-
++	
++	//FUZZ
++	/*
+ 	signal_set(&ps->ps_evsigint, SIGINT, parent_sig_handler, ps);
+ 	signal_set(&ps->ps_evsigterm, SIGTERM, parent_sig_handler, ps);
+ 	signal_set(&ps->ps_evsigchld, SIGCHLD, parent_sig_handler, ps);
+@@ -252,6 +303,7 @@
+ 	signal_add(&ps->ps_evsighup, NULL);
+ 	signal_add(&ps->ps_evsigpipe, NULL);
+ 	signal_add(&ps->ps_evsigusr1, NULL);
++	*/
+ 
+ #if defined(HAVE_VROUTE)
+ 	vroute_init(env);
+@@ -259,6 +311,76 @@
+ 
+ 	proc_connect(ps, parent_connected);
+ 
++	//FUZZ: START
++	struct imsgbuf ctl_ibuf;
++	int ctl_fd = ps->ps_pipes[PROC_CONTROL][0].pp_pipes[PROC_PARENT][0];
++	imsgbuf_init(&ctl_ibuf, ctl_fd);
++
++	struct imsgbuf cert_ibuf;
++	int cert_fd = ps->ps_pipes[PROC_CERT][0].pp_pipes[PROC_PARENT][0];
++	imsgbuf_init(&cert_ibuf, cert_fd);
++
++	struct imsgbuf ikev2_ibuf;
++	int ikev2_fd = ps->ps_pipes[PROC_IKEV2][0].pp_pipes[PROC_PARENT][0];
++	imsgbuf_init(&ikev2_ibuf, ikev2_fd);
++
++	while (1)
++	{
++		uint8_t compartment;
++		uint32_t type;
++		uint32_t id;
++		pid_t pid;
++		size_t datalen;
++
++		char payload[65535];
++		size_t payload_size;
++
++		if (get_metadata(&compartment, &type, &id, &pid, &datalen) != 0)
++			break;
++
++		/* Ensure values are within valid ranges */
++		compartment = compartment % (PROC_MAX - 1) + 1;
++		type = type % IMSG_TYPE_COUNT;
++		if (datalen > 65535)
++			datalen = 65535;
++
++		payload_size = get_payload(datalen, payload);
++
++		struct imsgbuf *target_ibuf = NULL;
++		switch (compartment)
++		{
++			case PROC_CONTROL:
++				target_ibuf = &ctl_ibuf;
++				break;
++			case PROC_CERT:
++				target_ibuf = &cert_ibuf;
++				break;
++			case PROC_IKEV2:
++				target_ibuf = &ikev2_ibuf;
++				break;
++		}
++
++		if (target_ibuf != NULL)
++		{
++			imsg_compose(target_ibuf, type, id, pid, -1, payload, payload_size);
++			printf("compose! message type is %d, payload size is %lu, and compartment ID is %d\n\n", type, payload_size, compartment);
++			imsgbuf_flush(target_ibuf);
++		}
++	}
++
++	// Send IMSG_END_OF_MSGS to all compartments to signal end of input
++	imsg_compose(&ctl_ibuf, IMSG_END_OF_MSGS, 0, 0, -1, NULL, 0);
++	imsgbuf_flush(&ctl_ibuf);
++
++	imsg_compose(&cert_ibuf, IMSG_END_OF_MSGS, 0, 0, -1, NULL, 0);
++	imsgbuf_flush(&cert_ibuf);
++
++	imsg_compose(&ikev2_ibuf, IMSG_END_OF_MSGS, 0, 0, -1, NULL, 0);
++	imsgbuf_flush(&ikev2_ibuf);
++
++	printf("before event_dispatch!\n");
++	//FUZZ: END
++
+ 	event_dispatch();
+ 
+ 	log_debug("%d parent exiting", getpid());
+@@ -477,6 +599,15 @@
+ 	case IMSG_OCSP_FD:
+ 		ocsp_connect(env, imsg);
+ 		break;
++	case IMSG_END_OF_MSGS:
++		printf("cert END_OF_MSGS!!!");
++		end_of_msgs_count++;
++		printf(" Count: %d/3\n", end_of_msgs_count);
++		if (end_of_msgs_count == 3) {
++			printf("All compartments received END_OF_MSGS. Exiting program.\n");
++			exit(0);
++		}
++		break;
+ 	default:
+ 		return (-1);
+ 	}
+@@ -516,6 +647,15 @@
+ 
+ 		/* return 1 to let proc.c handle it locally */
+ 		return (1);
++	case IMSG_END_OF_MSGS:
++		printf("control END_OF_MSGS!!!");
++		end_of_msgs_count++;
++		printf(" Count: %d/3\n", end_of_msgs_count);
++		if (end_of_msgs_count == 3) {
++			printf("All compartments received END_OF_MSGS. Exiting program.\n");
++			exit(0);
++		}
++		break;
+ 	default:
+ 		return (-1);
+ 	}
+@@ -542,6 +682,15 @@
+ 	case IMSG_VROUTE_CLONE:
+ 		return (vroute_getcloneroute(env, imsg));
+ #endif
++	case IMSG_END_OF_MSGS:
++		printf("ikev2 END_OF_MSGS!!!");
++		end_of_msgs_count++;
++		printf(" Count: %d/3\n", end_of_msgs_count);
++		if (end_of_msgs_count == 3) {
++			printf("All compartments received END_OF_MSGS. Exiting program.\n");
++			exit(0);
++		}
++		break;
+ 	default:
+ 		return (-1);
+ 	}
+Only in iked: iked.conf.5
+Only in iked: iked.h
+Only in iked: ikev2.c
+Only in iked: ikev2.h
+Only in iked: ikev2_msg.c
+Only in iked: ikev2_pld.c
+Only in iked: imsg_util.c
+Only in iked: ipsec.c
+Only in iked: log.c
+Only in iked: ocsp.c
+Only in iked: parse.y
+Only in iked: pfkey.c
+Only in iked: policy.c
+Only in iked: print.c
+diff -u iked/proc.c fuzz-iked/proc.c
+--- iked/proc.c	2025-10-15 21:36:24.487082000 +0000
++++ fuzz-iked/proc.c	2025-10-15 22:40:54.184014000 +0000
+@@ -116,7 +116,9 @@
+ 			snprintf(num, sizeof(num), "%u", i);
+ 
+ 			fd = ps->ps_pipes[p->p_id][i].pp_pipes[PROC_PARENT][0];
+-			ps->ps_pipes[p->p_id][i].pp_pipes[PROC_PARENT][0] = -1;
++			//FUZZ
++#if 0
++			//ps->ps_pipes[p->p_id][i].pp_pipes[PROC_PARENT][0] = -1;
+ 
+ 			switch (fork()) {
+ 			case -1:
+@@ -139,6 +141,7 @@
+ 				close(fd);
+ 				break;
+ 			}
++#endif
+ 		}
+ 	}
+ 	free(nargv);
+@@ -686,6 +689,12 @@
+ 		case IMSG_CTL_PROCFD:
+ 			IMSG_SIZE_CHECK(&imsg, &pf);
+ 			memcpy(&pf, imsg.data, sizeof(pf));
++			//FUZZ: PATCH start
++			if (pf.pf_procid <= 0 || pf.pf_procid >= PROC_MAX)
++				break;
++			if (pf.pf_instance != 0)
++				break;
++			//FUZZ: PATCH end
+ 			proc_accept(ps, imsg_get_fd(&imsg), pf.pf_procid,
+ 			    pf.pf_instance);
+ 			break;
+Only in iked: smult_curve25519_ref.c
+Only in iked: sntrup761.c
+Only in iked: sntrup761.sh
+Only in iked: timer.c
+diff -u iked/types.h fuzz-iked/types.h
+--- iked/types.h	2025-10-15 21:35:44.611492000 +0000
++++ fuzz-iked/types.h	2025-10-15 22:40:54.184053000 +0000
+@@ -133,6 +133,9 @@
+ 	IMSG_CTL_SHOW_STATS,
+ 	IMSG_CTL_PROCFD,
+ 	IMSG_CTL_PROCREADY,
++	//FUZZ
++	IMSG_TYPE_COUNT,
++	IMSG_END_OF_MSGS
+ };
+ 
+ enum privsep_procid {
+Only in iked: util.c
+Only in iked: version.h
+Only in iked: vroute-netlink.c
+Only in iked: vroute.c

@@ -1,0 +1,21 @@
+--- rpki-client-portable/update.sh	2025-12-30 01:25:58.858097000 +0000
++++ artifact-rpki-client-portable/update.sh	2025-12-30 01:06:31.194547000 +0000
+@@ -1,7 +1,7 @@
+ #!/bin/sh
+ set -e
+ 
+-openbsd_branch=master
++openbsd_branch=ac6b9291d18fbd471c049ca4058e25912ada75b6
+ if [ -n "$1" ]; then
+ 	openbsd_branch="$1"
+ fi
+@@ -18,8 +18,7 @@
+ if [ -d openbsd/.git ]; then
+ 	(cd openbsd
+ 	 git fetch
+-	 git checkout "${openbsd_branch}"
+-	 git pull --rebase)
++	 git checkout "${openbsd_branch}")
+ fi
+ 
+ # setup source paths

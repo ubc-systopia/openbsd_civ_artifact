@@ -1,0 +1,1683 @@
+diff -aruN openssh-portable/BUFFER_CHECKER_FIX.md openssh-portable-fuzz-with-msg-gen-lib/BUFFER_CHECKER_FIX.md
+--- openssh-portable/BUFFER_CHECKER_FIX.md	1970-01-01 00:00:00.000000000 +0000
++++ openssh-portable-fuzz-with-msg-gen-lib/BUFFER_CHECKER_FIX.md	2025-12-22 20:56:39.292985000 +0000
+@@ -0,0 +1,195 @@
++# Fix for Missing libbuffer_check.so and libmsg_generator Libraries
++
++## Problem
++
++When building openssh-portable with custom buffer checking libraries, the build fails with:
++
++```
++monitor.c:102:10: fatal error: 'msg_generator.h' file not found
++```
++
++And/or runtime errors:
++```
++libbuffer_check.so => not found (0)
++```
++
++## Root Cause
++
++The build system needs to:
++1. Include the buffer checker headers during compilation (`-I` flag)
++2. Link against the buffer checker libraries (`-l` flags)
++3. Add the library directory to the linker search path (`-L` flag)
++4. Embed the runtime library path in the binaries (`-Wl,-rpath`)
++
++## Solution
++
++Modify `Makefile.in` to add the buffer checker paths and libraries.
++
++### Changes Made to Makefile.in
++
++#### 1. Add BUFFER_CHECKER_ROOT Variable (Line 53)
++```makefile
++BUFFER_CHECKER_ROOT ?= /opt/ptr_checker
++```
++
++This uses the `BUFFER_CHECKER_ROOT` environment variable if set, otherwise defaults to `/opt/ptr_checker`.
++
++#### 2. Add Include Path to CPPFLAGS (Line 54)
++```makefile
++CPPFLAGS=-I. -I$(srcdir) @CPPFLAGS@ -I$(BUFFER_CHECKER_ROOT) $(PATHS) @DEFS@
++```
++
++This adds `-I$(BUFFER_CHECKER_ROOT)` so the compiler can find `msg_generator.h` and `buffer_check_lib.h`.
++
++#### 3. Add Libraries to SSHDLIBS (Line 60)
++```makefile
++SSHDLIBS=@SSHDLIBS@ -lmsg_generator -lbuffer_check
++```
++
++This adds `-lmsg_generator -lbuffer_check` to link the required libraries.
++
++#### 4. Add Library Path and RPATH to LDFLAGS (Lines 70-71)
++```makefile
++LDFLAGS=-L. -Lopenbsd-compat/ -L$(BUFFER_CHECKER_ROOT) -Wl,-rpath,$(BUFFER_CHECKER_ROOT) @LDFLAGS@
++LDFLAGS_NOPIE=-L. -Lopenbsd-compat/ -L$(BUFFER_CHECKER_ROOT) -Wl,-rpath,$(BUFFER_CHECKER_ROOT) @LDFLAGS_NOPIE@
++```
++
++This:
++- Adds `-L$(BUFFER_CHECKER_ROOT)` so the linker can find the libraries during build
++- Adds `-Wl,-rpath,$(BUFFER_CHECKER_ROOT)` so the runtime linker can find the libraries when running the binary
++
++## Commands Run
++
++### 1. Navigate to openssh directory
++```bash
++cd /opt/openssh-portable-fuzz
++# Or using pwd:
++cd $(pwd)
++```
++
++### 2. Edit Makefile.in
++```bash
++# Edit lines 53-54, 60, and 70-71 in Makefile.in with the changes above
++vi Makefile.in
++```
++
++### 3. Regenerate Makefile from Makefile.in
++```bash
++./config.status Makefile
++```
++
++### 4. Clean and Rebuild
++```bash
++make clean && make
++```
++
++### 5. Verify the Fix
++```bash
++ldd ./sshd
++```
++
++Expected output should show:
++```
++libbuffer_check.so => /opt/ptr_checker/libbuffer_check.so (0x...)
++```
++
++No "not found" errors.
++
++## How to Reproduce
++
++### Method 1: Using config.status (if you already ran configure)
++```bash
++# 1. Copy the modified Makefile.in to your openssh source directory
++cp Makefile.in $(pwd)/
++
++# 2. Regenerate Makefile
++cd $(pwd)
++./config.status Makefile
++
++# 3. Build
++make clean && make
++```
++
++### Method 2: Using configure (fresh setup)
++```bash
++# 1. Navigate to openssh directory
++cd $(pwd)
++
++# 2. Copy the modified Makefile.in (if needed)
++# cp /path/to/modified/Makefile.in ./
++
++# 2. Run configure with your options
++./configure --with-kerberos5 --with-pam \
++    --prefix=/path/to/openssh-portable-fuzz \
++    --sbindir=/path/to/openssh-portable-fuzz \
++    --libexecdir=/path/to/openssh-portable-fuzz \
++    --sysconfdir=/path/to/openssh-portable-fuzz \
++    CFLAGS='-O0 -g' \
++    CC=afl-clang-lto
++
++# 3. Build
++make clean && make
++```
++
++## Environment Variable Override
++
++If you want to use a different path for the buffer checker libraries:
++
++```bash
++export BUFFER_CHECKER_ROOT=/your/custom/path
++./config.status Makefile
++make clean && make
++```
++
++The `?=` operator in Makefile.in means it will use the environment variable if set.
++
++## Verification
++
++After building, verify all libraries are found:
++
++```bash
++# Check sshd
++ldd ./sshd | grep -E "(buffer_check|msg_generator|not found)"
++
++# Check sshd-session
++ldd ./sshd-session | grep -E "(buffer_check|msg_generator|not found)"
++
++# Check sshd-auth
++ldd ./sshd-auth | grep -E "(buffer_check|msg_generator|not found)"
++```
++
++All should show the libraries pointing to the correct path, with no "not found" errors.
++
++## Files Modified
++
++- `Makefile.in` - Build system template (4 sections modified)
++
++## Files Generated
++
++- `Makefile` - Generated from Makefile.in by configure/config.status
++
++## Notes
++
++- The changes to `Makefile.in` are **permanent** and will persist across configure runs
++- The `Makefile` is **generated** and will be overwritten each time you run configure
++- Always edit `Makefile.in`, never edit `Makefile` directly
++- The `?=` operator in Make means "assign if not already defined", allowing environment variable override
++
++## Quick Reference: All Commands in Order
++
++```bash
++# Navigate to openssh directory
++cd /opt/openssh-portable-fuzz
++
++# Edit Makefile.in (apply the 4 changes described above)
++vi Makefile.in
++
++# Regenerate Makefile
++./config.status Makefile
++
++# Clean and build
++make clean && make
++
++# Verify
++ldd ./sshd | grep buffer_check
++```
+diff -aruN openssh-portable/Makefile.in openssh-portable-fuzz-with-msg-gen-lib/Makefile.in
+--- openssh-portable/Makefile.in	2025-12-23 00:28:41.375680000 +0000
++++ openssh-portable-fuzz-with-msg-gen-lib/Makefile.in	2025-12-22 20:55:57.813304000 +0000
+@@ -48,15 +48,16 @@
+ 
+ CC=@CC@
+ LD=@LD@
+-CFLAGS=@CFLAGS@
++CFLAGS=@CFLAGS@ -fsanitize-recover=memory
+ CFLAGS_NOPIE=@CFLAGS_NOPIE@
+-CPPFLAGS=-I. -I$(srcdir) @CPPFLAGS@ $(PATHS) @DEFS@
++BUFFER_CHECKER_ROOT ?= /opt/ptr_checker
++CPPFLAGS=-I. -I$(srcdir) @CPPFLAGS@ -I$(BUFFER_CHECKER_ROOT) $(PATHS) @DEFS@
+ PICFLAG=@PICFLAG@
+ LIBS=@LIBS@
+ CHANNELLIBS=@CHANNELLIBS@
+ K5LIBS=@K5LIBS@
+ GSSLIBS=@GSSLIBS@
+-SSHDLIBS=@SSHDLIBS@
++SSHDLIBS=@SSHDLIBS@ -lmsg_generator -lbuffer_check
+ LIBEDIT=@LIBEDIT@
+ LIBFIDO2=@LIBFIDO2@
+ LIBWTMPDB=@LIBWTMPDB@
+@@ -66,8 +67,8 @@
+ INSTALL=@INSTALL@
+ SED=@SED@
+ XAUTH_PATH=@XAUTH_PATH@
+-LDFLAGS=-L. -Lopenbsd-compat/ @LDFLAGS@
+-LDFLAGS_NOPIE=-L. -Lopenbsd-compat/ @LDFLAGS_NOPIE@
++LDFLAGS=-L. -Lopenbsd-compat/ -L$(BUFFER_CHECKER_ROOT) -Wl,-rpath,$(BUFFER_CHECKER_ROOT) @LDFLAGS@
++LDFLAGS_NOPIE=-L. -Lopenbsd-compat/ -L$(BUFFER_CHECKER_ROOT) -Wl,-rpath,$(BUFFER_CHECKER_ROOT) @LDFLAGS_NOPIE@
+ EXEEXT=@EXEEXT@
+ MANFMT=@MANFMT@
+ MKDIR_P=@MKDIR_P@
+diff -aruN openssh-portable/aclocal.m4 openssh-portable-fuzz-with-msg-gen-lib/aclocal.m4
+--- openssh-portable/aclocal.m4	1970-01-01 00:00:00.000000000 +0000
++++ openssh-portable-fuzz-with-msg-gen-lib/aclocal.m4	2025-12-22 20:56:38.575772000 +0000
+@@ -0,0 +1,15 @@
++# generated automatically by aclocal 1.17 -*- Autoconf -*-
++
++# Copyright (C) 1996-2024 Free Software Foundation, Inc.
++
++# This file is free software; the Free Software Foundation
++# gives unlimited permission to copy and/or distribute it,
++# with or without modifications, as long as this notice is preserved.
++
++# This program is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY, to the extent permitted by law; without
++# even the implied warranty of MERCHANTABILITY or FITNESS FOR A
++# PARTICULAR PURPOSE.
++
++m4_ifndef([AC_CONFIG_MACRO_DIRS], [m4_defun([_AM_CONFIG_MACRO_DIRS], [])m4_defun([AC_CONFIG_MACRO_DIRS], [_AM_CONFIG_MACRO_DIRS($@)])])
++m4_include([m4/openssh.m4])
+diff -aruN openssh-portable/clientloop.c openssh-portable-fuzz-with-msg-gen-lib/clientloop.c
+--- openssh-portable/clientloop.c	2025-12-23 00:28:41.378810000 +0000
++++ openssh-portable-fuzz-with-msg-gen-lib/clientloop.c	2025-12-22 20:56:45.026247000 +0000
+@@ -975,11 +975,11 @@
+ 	} else if (options.forward_agent != 0) {
+ 		/* agent forwarding needs to open $SSH_AUTH_SOCK at will */
+ 		debug("pledge: agent");
+-		if (pledge("stdio unix proc tty", NULL) == -1)
++		if (pledge(PLEDGE_EXTRA_INET "stdio unix proc tty", NULL) == -1)
+ 			fatal_f("pledge(): %s", strerror(errno));
+ 	} else {
+ 		debug("pledge: fork");
+-		if (pledge("stdio proc tty", NULL) == -1)
++		if (pledge(PLEDGE_EXTRA_INET "stdio proc tty", NULL) == -1)
+ 			fatal_f("pledge(): %s", strerror(errno));
+ 	}
+ 	/* XXX further things to do:
+diff -aruN openssh-portable/configure.ac openssh-portable-fuzz-with-msg-gen-lib/configure.ac
+--- openssh-portable/configure.ac	2025-12-23 00:28:41.379767000 +0000
++++ openssh-portable-fuzz-with-msg-gen-lib/configure.ac	2025-12-22 20:56:35.592012000 +0000
+@@ -629,6 +629,9 @@
+ # Default shared library extension
+ SHLIBEXT=".so"
+ 
++# See OpenBSD section in $host case below.
++need_pledge_inet=""
++
+ # Check for some target-specific stuff
+ case "$host" in
+ *-*-aix*)
+@@ -1128,6 +1131,28 @@
+ 	AC_DEFINE([SYSLOG_R_SAFE_IN_SIGHAND], [1],
+ 	    [syslog_r function is safe to use in in a signal handler])
+ 	TEST_MALLOC_OPTIONS="SJRU"
++	AC_MSG_CHECKING([whether pledge(2) allows IP_TOS])
++	AC_RUN_IFELSE(
++	    [AC_LANG_PROGRAM([[
++#include <sys/socket.h>
++#include <netinet/in.h>
++#include <unistd.h>
++#include <stdlib.h>
++#include <err.h>
++	    ]], [[
++int s, one = 1;
++if ((s = socket(AF_INET, SOCK_STREAM, 0)) == -1)
++	err(1, "socket");
++if (pledge("stdio", NULL) == -1)
++	err(1, "pledge");
++if (setsockopt(s, IPPROTO_IP, IP_TOS, &one, sizeof(one)) == -1)
++	err(1, "setsockopt");
++	    ]])],
++	    [ AC_MSG_RESULT([yes]) ], [
++		AC_MSG_RESULT([no])
++		need_pledge_inet=1
++	    ],
++	    [ AC_MSG_WARN([cross compiling: cannot test]) ])
+ 	;;
+ *-*-solaris*)
+ 	if test "x$withval" != "xno" ; then
+@@ -1400,6 +1425,14 @@
+ 	],
+ 	[	AC_MSG_WARN([cross compiling: not checking compiler sanity]) ]
+ )
++
++dnl Finish up special pledge(2) handling from above.
++if test -z "$need_pledge_inet" ; then
++	AC_DEFINE_UNQUOTED([PLEDGE_EXTRA_INET], [])
++else
++	AC_DEFINE_UNQUOTED([PLEDGE_EXTRA_INET], ["inet "],
++		[need inet in pledge for setsockopt IP_TOS])
++fi
+ 
+ dnl Checks for header files.
+ # Checks for libraries.
+diff -aruN openssh-portable/detect-asan.sh openssh-portable-fuzz-with-msg-gen-lib/detect-asan.sh
+--- openssh-portable/detect-asan.sh	1970-01-01 00:00:00.000000000 +0000
++++ openssh-portable-fuzz-with-msg-gen-lib/detect-asan.sh	2025-12-22 20:56:36.275129000 +0000
+@@ -0,0 +1,59 @@
++#!/bin/sh
++# detect-asan.sh: detect if a binary is instrumented with AddressSanitizer
++# and print which symbol or library caused detection.
++
++BIN=${1:-./sshd}
++[ -x "$BIN" ] || { echo "no such executable: $BIN" >&2; exit 2; }
++
++ASAN_SYMS='__asan_init|__asan_version_mismatch_check|__asan_report_|__asan_handle_no_return'
++
++found=0
++
++# Helper: print if matches
++check_symbols() {
++  tool=$1
++  shift
++  if command -v "$tool" >/dev/null 2>&1; then
++    matches=$($tool "$@" 2>/dev/null | grep -E "$ASAN_SYMS")
++    if [ -n "$matches" ]; then
++      echo "ASan: detected in $BIN"
++      echo "Matched via $tool:"
++      echo "$matches"
++      exit 0
++    fi
++  fi
++}
++
++# 1) nm
++check_symbols nm -an "$BIN"
++
++# 2) readelf
++check_symbols readelf -s "$BIN"
++
++# 3) objdump
++check_symbols objdump -t "$BIN"
++
++# 4) ldd (look for ASan runtime lib)
++if command -v ldd >/dev/null 2>&1; then
++  libs=$(ldd "$BIN" 2>/dev/null | grep 'libclang_rt\.asan')
++  if [ -n "$libs" ]; then
++    echo "ASan: detected in $BIN"
++    echo "Matched via ldd: $libs"
++    exit 0
++  fi
++fi
++
++# 5) strings fallback
++if command -v strings >/dev/null 2>&1; then
++  matches=$(strings -a "$BIN" 2>/dev/null | grep -E 'AddressSanitizer|asan_runtime')
++  if [ -n "$matches" ]; then
++    echo "ASan: detected in $BIN"
++    echo "Matched via strings:"
++    echo "$matches" | head -n 5   # show first few hits
++    exit 0
++  fi
++fi
++
++echo "ASan: not detected in $BIN"
++exit 1
++
+diff -aruN openssh-portable/fatal.c openssh-portable-fuzz-with-msg-gen-lib/fatal.c
+--- openssh-portable/fatal.c	2025-12-23 00:28:38.500402000 +0000
++++ openssh-portable-fuzz-with-msg-gen-lib/fatal.c	2025-12-22 20:56:10.538276000 +0000
+@@ -33,14 +33,27 @@
+ 
+ /* Fatal messages.  This function never returns. */
+ 
+-void
++	void
+ sshfatal(const char *file, const char *func, int line, int showfunc,
+-    LogLevel level, const char *suffix, const char *fmt, ...)
++		LogLevel level, const char *suffix, const char *fmt, ...)
+ {
+ 	va_list args;
+ 
++	if (showfunc)
++		printf("%s(): ", func);
++
+ 	va_start(args, fmt);
+-	sshlogv(file, func, line, showfunc, level, suffix, fmt, args);
++	vprintf(fmt, args);
+ 	va_end(args);
++
++	if (suffix && *suffix)
++		printf(" %s", suffix);
++
++	printf("\n");
++	fflush(stdout);
++
+ 	cleanup_exit(255);
+ }
++
++
++
+diff -aruN openssh-portable/fuzz.md openssh-portable-fuzz-with-msg-gen-lib/fuzz.md
+--- openssh-portable/fuzz.md	1970-01-01 00:00:00.000000000 +0000
++++ openssh-portable-fuzz-with-msg-gen-lib/fuzz.md	2025-12-22 20:56:45.378303000 +0000
+@@ -0,0 +1,22 @@
++The command used to configure the OpenSSH. This enables two features: kerneros5 and pam, because they they will enable more handlers, which gives us more code to fuzz. This configure also provides the correct path when forking unprivileged compartments.
++
++```bash
++./configure --with-kerberos5 \
++            --with-pam \
++            --prefix="$PWD" \
++            --sbindir="$PWD" \
++            --libexecdir="$PWD" \
++            --sysconfdir="$PWD" \
++            CFLAGS="$CFLAGS" LDFLAGS="$LDFLAGS"
++```
++Command used to fuzz the program:
++
++```bash
++afl-fuzz \
++  -i in \
++  -o findings \
++  -g 4000 \
++  -m none \
++  -- $(pwd)/sshd-session -R
++```
++
+diff -aruN openssh-portable/install-sh openssh-portable-fuzz-with-msg-gen-lib/install-sh
+--- openssh-portable/install-sh	2025-12-23 00:28:38.500915000 +0000
++++ openssh-portable-fuzz-with-msg-gen-lib/install-sh	2025-12-22 20:56:39.265141000 +0000
+@@ -1,7 +1,7 @@
+ #!/bin/sh
+ # install - install a program, script, or datafile
+ 
+-scriptversion=2020-11-14.01; # UTC
++scriptversion=2023-11-23.18; # UTC
+ 
+ # This originates from X11R5 (mit/util/scripts/install.sh), which was
+ # later released in X11R6 (xc/config/util/install.sh) with the
+@@ -124,9 +124,9 @@
+ 
+ If -S is not specified, no backups are attempted.
+ 
+-Email bug reports to bug-automake@gnu.org.
+-Automake home page: https://www.gnu.org/software/automake/
+-"
++Report bugs to <bug-automake@gnu.org>.
++GNU Automake home page: <https://www.gnu.org/software/automake/>.
++General help using GNU software: <https://www.gnu.org/gethelp/>."
+ 
+ while test $# -ne 0; do
+   case $1 in
+diff -aruN openssh-portable/log.c openssh-portable-fuzz-with-msg-gen-lib/log.c
+--- openssh-portable/log.c	2025-12-23 00:28:41.383965000 +0000
++++ openssh-portable-fuzz-with-msg-gen-lib/log.c	2025-12-22 20:56:47.491648000 +0000
+@@ -49,7 +49,7 @@
+ #include <time.h>
+ #include <unistd.h>
+ #if defined(HAVE_STRNVIS) && defined(HAVE_VIS_H) && !defined(BROKEN_STRNVIS)
+-# include <vis.h>
++# include <openbsd_vis.h>
+ #endif
+ 
+ #include "log.h"
+@@ -397,7 +397,7 @@
+ 		snprintf(fmtbuf, sizeof(fmtbuf), "%s: %s", msgbuf, suffix);
+ 		strlcpy(msgbuf, fmtbuf, sizeof(msgbuf));
+ 	}
+-	strnvis(fmtbuf, msgbuf, sizeof(fmtbuf),
++	openbsd_strnvis(fmtbuf, msgbuf, sizeof(fmtbuf),
+ 	    log_on_stderr ? LOG_STDERR_VIS : LOG_SYSLOG_VIS);
+ 	if (log_handler != NULL) {
+ 		/* Avoid recursion */
+diff -aruN openssh-portable/monitor.c openssh-portable-fuzz-with-msg-gen-lib/monitor.c
+--- openssh-portable/monitor.c	2025-12-23 00:28:41.386281000 +0000
++++ openssh-portable-fuzz-with-msg-gen-lib/monitor.c	2025-12-22 20:56:51.042977000 +0000
+@@ -27,6 +27,8 @@
+ 
+ #include "includes.h"
+ 
++#define debug_f printf
++
+ #include <sys/types.h>
+ #include <sys/socket.h>
+ #include <sys/wait.h>
+@@ -97,6 +99,8 @@
+ #include "ssherr.h"
+ #include "sk-api.h"
+ #include "srclimit.h"
++#include <msg_generator.h>
++#include <buffer_check_lib.h>
+ 
+ #ifdef GSSAPI
+ static Gssctxt *gsscontext = NULL;
+@@ -273,11 +277,17 @@
+ {
+ 	struct mon_table *ent;
+ 	int authenticated = 0, partial = 0;
++	int other_end = pmonitor->m_recvfd;
++	struct sshbuf *mym;
+ 
++	mym = sshbuf_new();
++
++	sshbuf_put_cstring(mym, "mypassword");
++
+ 	debug3("preauth child monitor started");
+ 
+ 	if (pmonitor->m_recvfd >= 0)
+-		close(pmonitor->m_recvfd);
++		// close(pmonitor->m_recvfd);
+ 	if (pmonitor->m_log_sendfd >= 0)
+ 		close(pmonitor->m_log_sendfd);
+ 	pmonitor->m_log_sendfd = pmonitor->m_recvfd = -1;
+@@ -294,6 +304,84 @@
+ 	monitor_permit(mon_dispatch, MONITOR_REQ_MODULI, 1);
+ 	monitor_permit(mon_dispatch, MONITOR_REQ_SIGN, 1);
+ 
++	//////
++	// Use message generator library to generate and send messages
++	//////
++
++	{
++		struct msg_interface iface;
++		struct msg_data msg;
++		int ret;
++
++		/* Initialize the message generator interface with 1 compartment (other_end) */
++		/* We use 134 message types to match the original % 134 normalization */
++		if (msg_interface_init(&iface, STDIN_FILENO, 1, 134) != MSG_GEN_SUCCESS) {
++			fatal_f("Failed to initialize message interface");
++		}
++
++		/* Register the endpoint - compartment 0 points to other_end fd */
++		/* We'll send directly via mm_request_send, so we store the fd as endpoint */
++		msg_interface_set_endpoint(&iface, 0, (void *)(intptr_t)other_end);
++
++		/* Set EOM message type */
++		msg_interface_set_eom_type(&iface, FUZZ_EOM);
++
++		/* Generate and send messages */
++		while ((ret = msg_generate(&iface, &msg)) == MSG_GEN_SUCCESS) {
++			struct sshbuf *fuzz_msg = NULL;
++			int target_fd = (int)(intptr_t)msg.endpoint;
++
++			if ((fuzz_msg = sshbuf_new()) == NULL)
++				fatal_f("sshbuf_new failed");
++
++			/* Put payload into sshbuf */
++			if (msg.actual_payload_size > 0) {
++				if (sshbuf_put(fuzz_msg, msg.payload, msg.actual_payload_size) != 0) {
++					sshbuf_free(fuzz_msg);
++					fatal_f("sshbuf_put failed");
++				}
++			}
++
++			printf("compose message with type %d, payload size %u!\n",
++			       msg.type, msg.actual_payload_size);
++
++			/* Skip pointer checking for this payload to avoid false positives */
++			ptr_check_skip(msg.payload, msg.actual_payload_size);
++
++			/* Send the message */
++			mm_request_send(target_fd, msg.type, fuzz_msg);
++			sshbuf_free(fuzz_msg);
++
++			/* If there's a file descriptor, send it */
++			if (msg.has_fd && msg.fd != -1) {
++				printf("sending fd %d with message type %d\n", msg.fd, msg.type);
++				if (mm_send_fd(target_fd, msg.fd) == -1)
++					debug3_f("mm_send_fd failed");
++			}
++		}
++
++		/* Send EOM message */
++		struct msg_data eom_msg;
++		if (msg_generate_eom(&iface, 0, &eom_msg) == MSG_GEN_SUCCESS) {
++			struct sshbuf *fuzz_msg = NULL;
++			int target_fd = (int)(intptr_t)eom_msg.endpoint;
++
++			if ((fuzz_msg = sshbuf_new()) == NULL)
++				fatal_f("sshbuf_new failed");
++
++			mm_request_send(target_fd, eom_msg.type, fuzz_msg);
++			sshbuf_free(fuzz_msg);
++		}
++
++		if (fsync(other_end) == -1)
++			debug3_f("fsync failed: %s", strerror(errno));
++	}
++
++
++
++
++
++
+ 	/* The first few requests do not require asynchronous access */
+ 	while (!authenticated) {
+ 		partial = 0;
+@@ -379,7 +467,7 @@
+ 		close(pmonitor->m_recvfd);
+ 	if (pmonitor->m_log_sendfd >= 0)
+ 		close(pmonitor->m_log_sendfd);
+-	pmonitor->m_sendfd = pmonitor->m_log_recvfd = -1;
++	// pmonitor->m_sendfd = pmonitor->m_log_recvfd = -1;
+ }
+ 
+ static void
+@@ -397,8 +485,8 @@
+ void
+ monitor_child_postauth(struct ssh *ssh, struct monitor *pmonitor)
+ {
+-	close(pmonitor->m_recvfd);
+-	pmonitor->m_recvfd = -1;
++	// close(pmonitor->m_recvfd);
++	// pmonitor->m_recvfd = -1;
+ 
+ 	monitor_set_child_handler(pmonitor->m_pid);
+ 	ssh_signal(SIGHUP, &monitor_child_handler);
+@@ -493,6 +581,7 @@
+ 		pfd[0].events = POLLIN;
+ 		pfd[1].fd = pmonitor->m_log_recvfd;
+ 		pfd[1].events = pfd[1].fd == -1 ? 0 : POLLIN;
++		printf("pooling fd %d\n", pmonitor->m_sendfd);
+ 		if (poll(pfd, pfd[1].fd == -1 ? 1 : 2, -1) == -1) {
+ 			if (errno == EINTR || errno == EAGAIN)
+ 				continue;
+@@ -543,7 +632,8 @@
+ 		return ret;
+ 	}
+ 
+-	fatal_f("unsupported request: %d", type);
++	printf("unsupported request: %d", type);
++	fatal("unsupported request!");
+ 
+ 	/* NOTREACHED */
+ 	return (-1);
+@@ -585,6 +675,8 @@
+ 	int postauth;
+ 	int r;
+ 
++	printf("mm_answer_state executed!!\n");
++
+ 	sshbuf_reset(m);
+ 
+ 	debug_f("config len %zu", sshbuf_len(cfg));
+@@ -661,6 +753,8 @@
+ 	int r;
+ 	u_int min, want, max;
+ 
++	printf("mm_answer_moduli executed!!\n");
++
+ 	if ((r = sshbuf_get_u32(m, &min)) != 0 ||
+ 	    (r = sshbuf_get_u32(m, &want)) != 0 ||
+ 	    (r = sshbuf_get_u32(m, &max)) != 0)
+@@ -706,6 +800,8 @@
+ 	u_int compat;
+ 	const char proof_req[] = "hostkeys-prove-00@openssh.com";
+ 
++	printf("mm_answer_sign executed!!\n");
++
+ 	debug3_f("entering");
+ 
+ 	if ((r = sshkey_froms(m, &pubkey)) != 0 ||
+@@ -833,6 +929,8 @@
+ 	struct passwd *pwent;
+ 	int r, allowed = 0;
+ 
++	printf("mm_answer_pwnamallow executed!!\n");
++
+ 	debug3_f("entering");
+ 
+ 	if (authctxt->attempt++ != 0)
+@@ -927,6 +1025,8 @@
+ 	char *banner;
+ 	int r;
+ 
++	printf("mm_answer_auth2_read_banner executed!!\n");
++
+ 	sshbuf_reset(m);
+ 	banner = auth2_read_banner();
+ 	if ((r = sshbuf_put_cstring(m, banner != NULL ? banner : "")) != 0)
+@@ -942,6 +1042,8 @@
+ {
+ 	int r;
+ 
++	printf("mm_answer_authserv executed!!\n");
++
+ 	monitor_permit_authentications(1);
+ 
+ 	if ((r = sshbuf_get_cstring(m, &authctxt->service, NULL)) != 0 ||
+@@ -994,6 +1096,8 @@
+ 	int r, authenticated;
+ 	size_t plen;
+ 
++	printf("mm_answer_authpassword executed!!\n");
++
+ 	if (!options.password_authentication)
+ 		fatal_f("password authentication not enabled");
+ 	if ((r = sshbuf_get_cstring(m, &passwd, &plen)) != 0)
+@@ -1034,6 +1138,8 @@
+ 	char **prompts;
+ 	int r;
+ 
++	printf("mm_answer_bsdauthquery executed!!\n");
++
+ 	if (!options.kbd_interactive_authentication)
+ 		fatal_f("kbd-int authentication not enabled");
+ 	success = bsdauth_query(authctxt, &name, &infotxt, &numprompts,
+@@ -1066,6 +1172,8 @@
+ 	char *response;
+ 	int r, authok;
+ 
++	printf("mm_answer_bsdauthrespond executed!!\n");
++
+ 	if (!options.kbd_interactive_authentication)
+ 		fatal_f("kbd-int authentication not enabled");
+ 	if (authctxt->as == NULL)
+@@ -1097,6 +1205,8 @@
+ int
+ mm_answer_pam_start(struct ssh *ssh, int sock, struct sshbuf *m)
+ {
++	printf("mm_answer_pam_start executed!!\n");
++
+ 	if (!options.use_pam)
+ 		fatal("UsePAM not set, but ended up in %s anyway", __func__);
+ 
+@@ -1115,6 +1225,8 @@
+ 	u_int ret;
+ 	int r;
+ 
++	printf("mm_answer_pam_account executed!!\n");
++
+ 	if (!options.use_pam)
+ 		fatal("%s: PAM not enabled", __func__);
+ 
+@@ -1138,6 +1250,8 @@
+ 	u_int ok = 0;
+ 	int r;
+ 
++	printf("mm_answer_pam_init_ctx executed!!\n");
++
+ 	debug3("%s", __func__);
+ 	if (!options.kbd_interactive_authentication)
+ 		fatal("%s: kbd-int authentication not enabled", __func__);
+@@ -1164,6 +1278,8 @@
+ 	u_int i, num = 0, *echo_on = 0;
+ 	int r, ret;
+ 
++	printf("mm_answer_pam_query executed!!\n");
++
+ 	debug3("%s", __func__);
+ 	sshpam_authok = NULL;
+ 	if (sshpam_ctxt == NULL)
+@@ -1205,6 +1321,8 @@
+ 	u_int i, num;
+ 	int r, ret;
+ 
++	printf("mm_answer_pam_respond executed!!\n");
++
+ 	debug3("%s", __func__);
+ 	if (sshpam_ctxt == NULL)
+ 		fatal("%s: no context", __func__);
+@@ -1245,6 +1363,8 @@
+ {
+ 	int r = sshpam_authok != NULL && sshpam_authok == sshpam_ctxt;
+ 
++	printf("mm_answer_pam_free_ctx executed!!\n");
++
+ 	debug3("%s", __func__);
+ 	if (sshpam_ctxt == NULL)
+ 		fatal("%s: no context", __func__);
+@@ -1270,6 +1390,8 @@
+ 	int r, allowed = 0;
+ 	struct sshauthopt *opts = NULL;
+ 
++	printf("mm_answer_keyallowed executed!!\n");
++
+ 	debug3_f("entering");
+ 	if ((r = sshbuf_get_u32(m, &type)) != 0 ||
+ 	    (r = sshbuf_get_cstring(m, &cuser, NULL)) != 0 ||
+@@ -1513,6 +1635,8 @@
+ 	int encoded_ret;
+ 	struct sshkey_sig_details *sig_details = NULL;
+ 
++	printf("mm_answer_keyverify executed!!\n");
++
+ 	if ((r = sshbuf_get_string_direct(m, &blob, &bloblen)) != 0 ||
+ 	    (r = sshbuf_get_string_direct(m, &signature, &signaturelen)) != 0 ||
+ 	    (r = sshbuf_get_string_direct(m, &data, &datalen)) != 0 ||
+@@ -1662,6 +1786,8 @@
+ 	Session *s;
+ 	int r, res, fd0;
+ 
++	printf("mm_answer_pty executed!!\n");
++
+ 	debug3_f("entering");
+ 
+ 	sshbuf_reset(m);
+@@ -1732,6 +1858,8 @@
+ 	char *tty;
+ 	int r;
+ 
++	printf("mm_answer_pty_cleanup executed!!\n");
++
+ 	debug3_f("entering");
+ 
+ 	if ((r = sshbuf_get_cstring(m, &tty, NULL)) != 0)
+@@ -1749,6 +1877,8 @@
+ 	extern struct monitor *pmonitor;
+ 	int res, status;
+ 
++	printf("mm_answer_term executed!!\n");
++
+ 	debug3_f("tearing down sessions");
+ 
+ 	/* The child is terminating */
+@@ -1778,6 +1908,8 @@
+ 	ssh_audit_event_t event;
+ 	int r;
+ 
++	printf("mm_answer_audit_event executed!!\n");
++
+ 	debug3("%s entering", __func__);
+ 
+ 	if ((r = sshbuf_get_u32(m, &n)) != 0)
+@@ -1806,6 +1938,8 @@
+ 	char *cmd;
+ 	int r;
+ 
++	printf("mm_answer_audit_command executed!!\n");
++
+ 	debug3("%s entering", __func__);
+ 	if ((r = sshbuf_get_cstring(m, &cmd, NULL)) != 0)
+ 		fatal("%s: buffer error: %s", __func__, ssh_err(r));
+@@ -1948,6 +2082,8 @@
+ 	u_char *p;
+ 	int r;
+ 
++	printf("mm_answer_gss_setup_ctx executed!!\n");
++
+ 	if (!options.gss_authentication)
+ 		fatal_f("GSSAPI authentication not enabled");
+ 
+@@ -1981,6 +2117,8 @@
+ 	OM_uint32 flags = 0; /* GSI needs this */
+ 	int r;
+ 
++	printf("mm_answer_gss_accept_ctx executed!!\n");
++
+ 	if (!options.gss_authentication)
+ 		fatal_f("GSSAPI authentication not enabled");
+ 
+@@ -2013,6 +2151,8 @@
+ 	OM_uint32 ret;
+ 	int r;
+ 
++	printf("mm_answer_gss_checkmic executed!!\n");
++
+ 	if (!options.gss_authentication)
+ 		fatal_f("GSSAPI authentication not enabled");
+ 
+@@ -2043,6 +2183,8 @@
+ 	int r, authenticated;
+ 	const char *displayname;
+ 
++	printf("mm_answer_gss_userok executed!!\n");
++
+ 	if (!options.gss_authentication)
+ 		fatal_f("GSSAPI authentication not enabled");
+ 
+@@ -2064,4 +2206,3 @@
+ 	return (authenticated);
+ }
+ #endif /* GSSAPI */
+-
+diff -aruN openssh-portable/monitor.h openssh-portable-fuzz-with-msg-gen-lib/monitor.h
+--- openssh-portable/monitor.h	2025-12-23 00:28:41.386340000 +0000
++++ openssh-portable-fuzz-with-msg-gen-lib/monitor.h	2025-12-22 20:56:10.018960000 +0000
+@@ -63,6 +63,7 @@
+ 	MONITOR_REQ_PAM_RESPOND = 108, MONITOR_ANS_PAM_RESPOND = 109,
+ 	MONITOR_REQ_PAM_FREE_CTX = 110, MONITOR_ANS_PAM_FREE_CTX = 111,
+ 	MONITOR_REQ_AUDIT_EVENT = 112, MONITOR_REQ_AUDIT_COMMAND = 113,
++	FUZZ_EOM = 114,
+ 
+ };
+ 
+diff -aruN openssh-portable/openbsd-compat/openbsd-compat.h openssh-portable-fuzz-with-msg-gen-lib/openbsd-compat/openbsd-compat.h
+--- openssh-portable/openbsd-compat/openbsd-compat.h	2025-12-23 00:28:41.387561000 +0000
++++ openssh-portable-fuzz-with-msg-gen-lib/openbsd-compat/openbsd-compat.h	2025-12-22 20:56:04.901781000 +0000
+@@ -40,7 +40,7 @@
+ #include "base64.h"
+ #include "sigact.h"
+ #include "readpassphrase.h"
+-#include "vis.h"
++#include "openbsd_vis.h"
+ #include "getrrsetbyname.h"
+ #include "sha1.h"
+ #include "sha2.h"
+diff -aruN openssh-portable/openbsd-compat/openbsd_vis.h openssh-portable-fuzz-with-msg-gen-lib/openbsd-compat/openbsd_vis.h
+--- openssh-portable/openbsd-compat/openbsd_vis.h	1970-01-01 00:00:00.000000000 +0000
++++ openssh-portable-fuzz-with-msg-gen-lib/openbsd-compat/openbsd_vis.h	2025-12-22 20:56:00.309592000 +0000
+@@ -0,0 +1,98 @@
++/*	$OpenBSD: openbsd_vis.h,v 1.15 2015/07/20 01:52:27 millert Exp $	*/
++/*	$NetBSD: openbsd_vis.h,v 1.4 1994/10/26 00:56:41 cgd Exp $	*/
++
++/*-
++ * Copyright (c) 1990 The Regents of the University of California.
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in the
++ *    documentation and/or other materials provided with the distribution.
++ * 3. Neither the name of the University nor the names of its contributors
++ *    may be used to endorse or promote products derived from this software
++ *    without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
++ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
++ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
++ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
++ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
++ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
++ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
++ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
++ * SUCH DAMAGE.
++ *
++ *	@(#)openbsd_vis.h	5.9 (Berkeley) 4/3/91
++ */
++
++/* OPENBSD ORIGINAL: include/openbsd_vis.h */
++
++#include "includes.h"
++#if !defined(HAVE_STRNVIS) || defined(BROKEN_STRNVIS)
++
++#ifndef _VIS_H_
++#define	_VIS_H_
++
++#include <sys/types.h>
++#include <limits.h>
++
++/*
++ * to select alternate encoding format
++ */
++#define	VIS_OCTAL	0x01	/* use octal \ddd format */
++#define	VIS_CSTYLE	0x02	/* use \[nrft0..] where appropriate */
++
++/*
++ * to alter set of characters encoded (default is to encode all
++ * non-graphic except space, tab, and newline).
++ */
++#define	VIS_SP		0x04	/* also encode space */
++#define	VIS_TAB		0x08	/* also encode tab */
++#define	VIS_NL		0x10	/* also encode newline */
++#define	VIS_WHITE	(VIS_SP | VIS_TAB | VIS_NL)
++#define	VIS_SAFE	0x20	/* only encode "unsafe" characters */
++#define	VIS_DQ		0x200	/* backslash-escape double quotes */
++#define	VIS_ALL		0x400	/* encode all characters */
++
++/*
++ * other
++ */
++#define	VIS_NOSLASH	0x40	/* inhibit printing '\' */
++#define	VIS_GLOB	0x100	/* encode glob(3) magics and '#' */
++
++/*
++ * unvis return codes
++ */
++#define	UNVIS_VALID	 1	/* character valid */
++#define	UNVIS_VALIDPUSH	 2	/* character valid, push back passed char */
++#define	UNVIS_NOCHAR	 3	/* valid sequence, no character produced */
++#define	UNVIS_SYNBAD	-1	/* unrecognized escape sequence */
++#define	UNVIS_ERROR	-2	/* decoder in unknown state (unrecoverable) */
++
++/*
++ * unvis flags
++ */
++#define	UNVIS_END	1	/* no more characters */
++
++char	*openbsd_vis(char *, int, int, int);
++int	openbsd_strvis(char *, const char *, int);
++int	openbsd_stravis(char **, const char *, int);
++int	openbsd_strnvis(char *, const char *, size_t, int)
++		__attribute__ ((__bounded__(__string__,1,3)));
++int	openbsd_strvisx(char *, const char *, size_t, int)
++		__attribute__ ((__bounded__(__string__,1,3)));
++int	strunvis(char *, const char *);
++int	unvis(char *, char, int *, int);
++ssize_t strnunvis(char *, const char *, size_t)
++		__attribute__ ((__bounded__(__string__,1,3)));
++
++#endif /* !_VIS_H_ */
++
++#endif /* !HAVE_STRNVIS || BROKEN_STRNVIS */
+diff -aruN openssh-portable/openbsd-compat/setproctitle.c openssh-portable-fuzz-with-msg-gen-lib/openbsd-compat/setproctitle.c
+--- openssh-portable/openbsd-compat/setproctitle.c	2025-12-23 00:28:38.511932000 +0000
++++ openssh-portable-fuzz-with-msg-gen-lib/openbsd-compat/setproctitle.c	2025-12-22 20:56:01.513099000 +0000
+@@ -44,7 +44,7 @@
+ #endif
+ #include <string.h>
+ 
+-#include <vis.h>
++#include <openbsd_vis.h>
+ 
+ #define SPT_NONE	0	/* don't use it at all */
+ #define SPT_PSTAT	1	/* use pstat(PSTAT_SETCMD, ...) */
+@@ -150,7 +150,7 @@
+ 	va_end(ap);
+ 	if (r == -1 || (size_t)r >= sizeof(buf) - len)
+ 		return;
+-	strnvis(ptitle, buf, sizeof(ptitle),
++	openbsd_strnvis(ptitle, buf, sizeof(ptitle),
+ 	    VIS_CSTYLE|VIS_NL|VIS_TAB|VIS_OCTAL);
+ 
+ #if SPT_TYPE == SPT_PSTAT
+diff -aruN openssh-portable/openbsd-compat/vis.c openssh-portable-fuzz-with-msg-gen-lib/openbsd-compat/vis.c
+--- openssh-portable/openbsd-compat/vis.c	2025-12-23 00:28:38.512554000 +0000
++++ openssh-portable-fuzz-with-msg-gen-lib/openbsd-compat/vis.c	2025-12-22 20:56:02.737899000 +0000
+@@ -1,4 +1,4 @@
+-/*	$OpenBSD: vis.c,v 1.25 2015/09/13 11:32:51 guenther Exp $ */
++/*	$OpenBSD: openbsd_vis.c,v 1.25 2015/09/13 11:32:51 guenther Exp $ */
+ /*-
+  * Copyright (c) 1989, 1993
+  *	The Regents of the University of California.  All rights reserved.
+@@ -28,7 +28,7 @@
+  * SUCH DAMAGE.
+  */
+ 
+-/* OPENBSD ORIGINAL: lib/libc/gen/vis.c */
++/* OPENBSD ORIGINAL: lib/libc/gen/openbsd_vis.c */
+ 
+ #include "includes.h"
+ #if !defined(HAVE_STRNVIS) || defined(BROKEN_STRNVIS)
+@@ -40,7 +40,7 @@
+ #include <string.h>
+ #include <stdlib.h>
+ 
+-#include "vis.h"
++#include "openbsd_vis.h"
+ 
+ #define	isoctal(c)	(((u_char)(c)) >= '0' && ((u_char)(c)) <= '7')
+ #define	isvisible(c,flag)						\
+@@ -56,10 +56,10 @@
+ 		isgraph((u_char)(c))))))
+ 
+ /*
+- * vis - visually encode characters
++ * openbsd_vis - visually encode characters
+  */
+ char *
+-vis(char *dst, int c, int flag, int nextc)
++openbsd_vis(char *dst, int c, int flag, int nextc)
+ {
+ 	if (isvisible(c, flag)) {
+ 		if ((c == '"' && (flag & VIS_DQ) != 0) ||
+@@ -142,10 +142,10 @@
+ 	*dst = '\0';
+ 	return (dst);
+ }
+-DEF_WEAK(vis);
++DEF_WEAK(openbsd_vis);
+ 
+ /*
+- * strvis, strnvis, strvisx - visually encode characters from src into dst
++ * openbsd_strvis, openbsd_strnvis, openbsd_strvisx - visually encode characters from src into dst
+  *	
+  *	Dst must be 4 times the size of src to account for possible
+  *	expansion.  The length of dst, not including the trailing NULL,
+@@ -158,20 +158,20 @@
+  *	This is useful for encoding a block of data.
+  */
+ int
+-strvis(char *dst, const char *src, int flag)
++openbsd_strvis(char *dst, const char *src, int flag)
+ {
+ 	char c;
+ 	char *start;
+ 
+ 	for (start = dst; (c = *src);)
+-		dst = vis(dst, c, flag, *++src);
++		dst = openbsd_vis(dst, c, flag, *++src);
+ 	*dst = '\0';
+ 	return (dst - start);
+ }
+-DEF_WEAK(strvis);
++DEF_WEAK(openbsd_strvis);
+ 
+ int
+-strnvis(char *dst, const char *src, size_t siz, int flag)
++openbsd_strnvis(char *dst, const char *src, size_t siz, int flag)
+ {
+ 	char *start, *end;
+ 	char tbuf[5];
+@@ -193,7 +193,7 @@
+ 			*dst++ = c;
+ 			src++;
+ 		} else {
+-			i = vis(tbuf, c, flag, *++src) - tbuf;
++			i = openbsd_vis(tbuf, c, flag, *++src) - tbuf;
+ 			if (dst + i <= end) {
+ 				memcpy(dst, tbuf, i);
+ 				dst += i;
+@@ -208,13 +208,13 @@
+ 	if (dst + i > end) {
+ 		/* adjust return value for truncation */
+ 		while ((c = *src))
+-			dst += vis(tbuf, c, flag, *++src) - tbuf;
++			dst += openbsd_vis(tbuf, c, flag, *++src) - tbuf;
+ 	}
+ 	return (dst - start);
+ }
+ 
+ int
+-stravis(char **outp, const char *src, int flag)
++openbsd_stravis(char **outp, const char *src, int flag)
+ {
+ 	char *buf;
+ 	int len, serrno;
+@@ -222,7 +222,7 @@
+ 	buf = reallocarray(NULL, 4, strlen(src) + 1);
+ 	if (buf == NULL)
+ 		return -1;
+-	len = strvis(buf, src, flag);
++	len = openbsd_strvis(buf, src, flag);
+ 	serrno = errno;
+ 	*outp = realloc(buf, len + 1);
+ 	if (*outp == NULL) {
+@@ -233,17 +233,17 @@
+ }
+ 
+ int
+-strvisx(char *dst, const char *src, size_t len, int flag)
++openbsd_strvisx(char *dst, const char *src, size_t len, int flag)
+ {
+ 	char c;
+ 	char *start;
+ 
+ 	for (start = dst; len > 1; len--) {
+ 		c = *src;
+-		dst = vis(dst, c, flag, *++src);
++		dst = openbsd_vis(dst, c, flag, *++src);
+ 	}
+ 	if (len)
+-		dst = vis(dst, *src, flag, '\0');
++		dst = openbsd_vis(dst, *src, flag, '\0');
+ 	*dst = '\0';
+ 	return (dst - start);
+ }
+diff -aruN openssh-portable/openbsd-compat/vis.h openssh-portable-fuzz-with-msg-gen-lib/openbsd-compat/vis.h
+--- openssh-portable/openbsd-compat/vis.h	2025-12-23 00:28:38.512579000 +0000
++++ openssh-portable-fuzz-with-msg-gen-lib/openbsd-compat/vis.h	2025-12-22 20:56:00.166770000 +0000
+@@ -1,5 +1,5 @@
+-/*	$OpenBSD: vis.h,v 1.15 2015/07/20 01:52:27 millert Exp $	*/
+-/*	$NetBSD: vis.h,v 1.4 1994/10/26 00:56:41 cgd Exp $	*/
++/*	$OpenBSD: openbsd_vis.h,v 1.15 2015/07/20 01:52:27 millert Exp $	*/
++/*	$NetBSD: openbsd_vis.h,v 1.4 1994/10/26 00:56:41 cgd Exp $	*/
+ 
+ /*-
+  * Copyright (c) 1990 The Regents of the University of California.
+@@ -29,10 +29,10 @@
+  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+  * SUCH DAMAGE.
+  *
+- *	@(#)vis.h	5.9 (Berkeley) 4/3/91
++ *	@(#)openbsd_vis.h	5.9 (Berkeley) 4/3/91
+  */
+ 
+-/* OPENBSD ORIGINAL: include/vis.h */
++/* OPENBSD ORIGINAL: include/openbsd_vis.h */
+ 
+ #include "includes.h"
+ #if !defined(HAVE_STRNVIS) || defined(BROKEN_STRNVIS)
+@@ -81,12 +81,12 @@
+  */
+ #define	UNVIS_END	1	/* no more characters */
+ 
+-char	*vis(char *, int, int, int);
+-int	strvis(char *, const char *, int);
+-int	stravis(char **, const char *, int);
+-int	strnvis(char *, const char *, size_t, int)
++char	*openbsd_vis(char *, int, int, int);
++int	openbsd_strvis(char *, const char *, int);
++int	openbsd_stravis(char **, const char *, int);
++int	openbsd_strnvis(char *, const char *, size_t, int)
+ 		__attribute__ ((__bounded__(__string__,1,3)));
+-int	strvisx(char *, const char *, size_t, int)
++int	openbsd_strvisx(char *, const char *, size_t, int)
+ 		__attribute__ ((__bounded__(__string__,1,3)));
+ int	strunvis(char *, const char *);
+ int	unvis(char *, char, int *, int);
+diff -aruN openssh-portable/readconf.c openssh-portable-fuzz-with-msg-gen-lib/readconf.c
+--- openssh-portable/readconf.c	2025-12-23 00:28:41.388907000 +0000
++++ openssh-portable-fuzz-with-msg-gen-lib/readconf.c	2025-12-22 20:56:37.313790000 +0000
+@@ -52,7 +52,7 @@
+ #include <util.h>
+ #endif
+ #if defined(HAVE_STRNVIS) && defined(HAVE_VIS_H) && !defined(BROKEN_STRNVIS)
+-# include <vis.h>
++# include <openbsd_vis.h>
+ #endif
+ 
+ #include "xmalloc.h"
+@@ -3844,7 +3844,7 @@
+ 	if (o->escape_char == SSH_ESCAPECHAR_NONE)
+ 		printf("escapechar none\n");
+ 	else {
+-		vis(buf, o->escape_char, VIS_WHITE, 0);
++		openbsd_vis(buf, o->escape_char, VIS_WHITE, 0);
+ 		printf("escapechar %s\n", buf);
+ 	}
+ 
+diff -aruN openssh-portable/regress/connect-bigconf.sh openssh-portable-fuzz-with-msg-gen-lib/regress/connect-bigconf.sh
+--- openssh-portable/regress/connect-bigconf.sh	2025-12-23 00:28:41.389414000 +0000
++++ openssh-portable-fuzz-with-msg-gen-lib/regress/connect-bigconf.sh	2025-12-22 20:56:23.043791000 +0000
+@@ -4,7 +4,7 @@
+ tid="simple connect"
+ 
+ for x in `jot 10000 1` ; do
+-	echo "Match group NONEXIST" >> $OBJ/sshd_config
++	echo "Match version NONEXIST" >> $OBJ/sshd_config
+ 	echo "ChrootDirectory /some/path/for/group/NONEXIST" >> $OBJ/sshd_config
+ done
+ #cat $OBJ/sshd_config
+diff -aruN openssh-portable/regress/unittests/test_helper/test_helper.c openssh-portable-fuzz-with-msg-gen-lib/regress/unittests/test_helper/test_helper.c
+--- openssh-portable/regress/unittests/test_helper/test_helper.c	2025-12-23 00:28:41.392076000 +0000
++++ openssh-portable-fuzz-with-msg-gen-lib/regress/unittests/test_helper/test_helper.c	2025-12-22 20:56:15.278297000 +0000
+@@ -44,7 +44,7 @@
+ #endif
+ 
+ #if defined(HAVE_STRNVIS) && defined(HAVE_VIS_H) && !defined(BROKEN_STRNVIS)
+-# include <vis.h>
++# include <openbsd_vis.h>
+ #endif
+ 
+ #include "entropy.h"
+@@ -554,9 +554,9 @@
+ 	TEST_CHECK(aa1, aa2, pred);
+ 	test_header(file, line, a1, a2, "CHAR", pred);
+ 	fprintf(stderr, "%12s = '%s' / 0x02%x\n", a1,
+-	    vis(buf, aa1, VIS_SAFE|VIS_NL|VIS_TAB|VIS_OCTAL, 0), aa1);
++	    openbsd_vis(buf, aa1, VIS_SAFE|VIS_NL|VIS_TAB|VIS_OCTAL, 0), aa1);
+ 	fprintf(stderr, "%12s = '%s' / 0x02%x\n", a1,
+-	    vis(buf, aa2, VIS_SAFE|VIS_NL|VIS_TAB|VIS_OCTAL, 0), aa2);
++	    openbsd_vis(buf, aa2, VIS_SAFE|VIS_NL|VIS_TAB|VIS_OCTAL, 0), aa2);
+ 	test_die();
+ }
+ 
+diff -aruN openssh-portable/scp.c openssh-portable-fuzz-with-msg-gen-lib/scp.c
+--- openssh-portable/scp.c	2025-12-23 00:28:41.392644000 +0000
++++ openssh-portable-fuzz-with-msg-gen-lib/scp.c	2025-12-22 20:56:48.862208000 +0000
+@@ -122,7 +122,7 @@
+ #include <time.h>
+ #include <unistd.h>
+ #if defined(HAVE_STRNVIS) && defined(HAVE_VIS_H) && !defined(BROKEN_STRNVIS)
+-#include <vis.h>
++#include <openbsd_vis.h>
+ #endif
+ 
+ #include "xmalloc.h"
+@@ -1411,7 +1411,7 @@
+ 		if ((fd = open(name, O_RDONLY|O_NONBLOCK)) == -1)
+ 			goto syserr;
+ 		if (strchr(name, '\n') != NULL) {
+-			strnvis(encname, name, sizeof(encname), VIS_NL);
++			openbsd_strnvis(encname, name, sizeof(encname), VIS_NL);
+ 			name = encname;
+ 		}
+ 		if (fstat(fd, &stb) == -1) {
+diff -aruN openssh-portable/sshconnect2.c openssh-portable-fuzz-with-msg-gen-lib/sshconnect2.c
+--- openssh-portable/sshconnect2.c	2025-12-23 00:28:41.399382000 +0000
++++ openssh-portable-fuzz-with-msg-gen-lib/sshconnect2.c	2025-12-22 20:56:12.550428000 +0000
+@@ -42,7 +42,7 @@
+ #include <stdarg.h>
+ #include <unistd.h>
+ #if defined(HAVE_STRNVIS) && defined(HAVE_VIS_H) && !defined(BROKEN_STRNVIS)
+-#include <vis.h>
++#include <openbsd_vis.h>
+ #endif
+ 
+ #include "openbsd-compat/sys-queue.h"
+diff -aruN openssh-portable/sshd-session.c openssh-portable-fuzz-with-msg-gen-lib/sshd-session.c
+--- openssh-portable/sshd-session.c	2025-12-23 00:28:41.399694000 +0000
++++ openssh-portable-fuzz-with-msg-gen-lib/sshd-session.c	2025-12-22 20:55:57.700145000 +0000
+@@ -29,6 +29,8 @@
+ 
+ #include "includes.h"
+ 
++#define debug_f printf
++
+ #include <sys/types.h>
+ #include <sys/ioctl.h>
+ #include <sys/socket.h>
+@@ -344,9 +346,12 @@
+ 	/* Store a pointer to the kex for later rekeying */
+ 	pmonitor->m_pkex = &ssh->kex;
+ 
+-	if ((pid = fork()) == -1)
++	debug_f("privsep_preauth!!!!!++++++++++++");
++
++	// if ((pid = fork()) == -1)
++	if (0)
+ 		fatal("fork of unprivileged child failed");
+-	else if (pid != 0) {
++	else if (1) {
+ 		debug2("Network child is on pid %ld", (long)pid);
+ 
+ 		pmonitor->m_pid = pid;
+@@ -357,15 +362,20 @@
+ 				have_agent = 0;
+ 			}
+ 		}
++		
++
++
+ 		monitor_child_preauth(ssh, pmonitor);
+ 
+ 		/* Wait for the child's exit status */
++		/*
+ 		while (waitpid(pid, &status, 0) == -1) {
+ 			if (errno == EINTR)
+ 				continue;
+ 			pmonitor->m_pid = -1;
+ 			fatal_f("waitpid: %s", strerror(errno));
+ 		}
++		*/
+ 		privsep_is_preauth = 0;
+ 		pmonitor->m_pid = -1;
+ 		if (WIFEXITED(status)) {
+@@ -437,20 +447,25 @@
+ #endif
+ 
+ 	/* New socket pair */
+-	monitor_reinit(pmonitor);
++	// monitor_reinit(pmonitor);
++	printf("after auth, pmonitor's fd is %d\n", pmonitor->m_sendfd);
+ 
++#if 0
+ 	pmonitor->m_pid = fork();
+ 	if (pmonitor->m_pid == -1)
+ 		fatal("fork of unprivileged child failed");
+ 	else if (pmonitor->m_pid != 0) {
++#endif
+ 		verbose("User child is on pid %ld", (long)pmonitor->m_pid);
+ 		sshbuf_reset(loginmsg);
+ 		monitor_clear_keystate(ssh, pmonitor);
+ 		monitor_child_postauth(ssh, pmonitor);
++#if 0
+ 
+ 		/* NEVERREACHED */
+ 		exit(0);
+ 	}
++#endif
+ 
+ 	/* child */
+ 
+@@ -849,6 +864,26 @@
+ 	uint64_t timing_secret = 0;
+ 	struct itimerval itv;
+ 
++	// Create UNIX socket pair
++	int sockpair[2];
++	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockpair) == -1)
++		fatal("socketpair failed: %s", strerror(errno));
++
++	// Read content from /tmp/sshd_rexec_dump and write to sockpair[0]
++	int dump_fd = open("./sshd-rexec-dump", O_RDONLY);
++	if (dump_fd != -1) {
++		char buffer[8192];
++		ssize_t bytes_read;
++		while ((bytes_read = read(dump_fd, buffer, sizeof(buffer))) > 0) {
++			if (write(sockpair[0], buffer, bytes_read) != bytes_read) {
++				error("write to sockpair[0] failed: %s", strerror(errno));
++				break;
++			}
++		}
++		close(dump_fd);
++	}
++
++
+ 	sigemptyset(&sigmask);
+ 	sigprocmask(SIG_SETMASK, &sigmask, NULL);
+ 
+@@ -987,6 +1022,7 @@
+ 		}
+ 	}
+ 
++
+ 	/* Check that there are no remaining arguments. */
+ 	if (optind < ac) {
+ 		fprintf(stderr, "Extra argument %s.\n", av[optind]);
+@@ -1034,11 +1070,13 @@
+ 	    SYSLOG_FACILITY_AUTH : options.log_facility,
+ 	    log_stderr || !inetd_flag || debug_flag);
+ 
++	debug_f("main function in sshd-session!!!\n");
++
+ 	/* Fetch our configuration */
+ 	if ((cfg = sshbuf_new()) == NULL)
+ 		fatal("sshbuf_new config buf failed");
+ 	setproctitle("%s", "[rexeced]");
+-	recv_rexec_state(REEXEC_CONFIG_PASS_FD, cfg, &timing_secret);
++	recv_rexec_state(sockpair[1], cfg, &timing_secret);
+ 	parse_server_config(&options, "rexec", cfg, &includes, NULL, 1);
+ 	/* Fill in default values for those options not explicitly set. */
+ 	fill_default_server_options(&options);
+@@ -1064,7 +1102,7 @@
+ 	endpwent();
+ 
+ 	if (!debug_flag && !inetd_flag) {
+-		if ((startup_pipe = dup(REEXEC_CONFIG_PASS_FD)) == -1)
++		if ((startup_pipe = dup(sockpair[1])) == -1)
+ 			fatal("internal error: no startup pipe");
+ 
+ 		/*
+@@ -1172,7 +1210,33 @@
+ 		sock_out = dup(STDOUT_FILENO);
+ 	} else {
+ 		/* rexec case; accept()ed socket in ancestor listener */
+-		sock_in = sock_out = dup(STDIN_FILENO);
++		debug_f("___ case two! ___");
++		// sock_in = sock_out = dup(STDIN_FILENO);
++
++		int srv = socket(AF_INET, SOCK_STREAM, 0);
++		struct sockaddr_in addr;
++		memset(&addr, 0, sizeof(addr));
++		addr.sin_family = AF_INET;
++		addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
++		addr.sin_port = 0;
++
++		bind(srv, (struct sockaddr *)&addr, sizeof(addr));
++		listen(srv, 1);
++
++		socklen_t alen = sizeof(addr);
++		getsockname(srv, (struct sockaddr *)&addr, &alen);
++
++		int cli = socket(AF_INET, SOCK_STREAM, 0);
++		connect(cli, (struct sockaddr *)&addr, sizeof(addr));
++
++		sock_in = sock_out = accept(srv, NULL, NULL);
++
++		// close(srv);
++		// keep or close(cli) depending on your needs
++		//
++		//
++
++		
+ 	}
+ 
+ 	/*
+@@ -1180,13 +1244,18 @@
+ 	 * as our code for setting the descriptors won't work if
+ 	 * ttyfd happens to be one of those.
+ 	 */
++
++	/*
+ 	if (stdfd_devnull(1, 1, !log_stderr) == -1)
+ 		error("stdfd_devnull failed");
++		*/
+ 	debug("network sockets: %d, %d", sock_in, sock_out);
+ 
++
+ 	/* This is the child processing a new connection. */
+ 	setproctitle("%s", "[accepted]");
+ 
++
+ 	/* Executed child processes don't need these. */
+ 	fcntl(sock_out, F_SETFD, FD_CLOEXEC);
+ 	fcntl(sock_in, F_SETFD, FD_CLOEXEC);
+@@ -1199,6 +1268,7 @@
+ 	ssh_signal(SIGCHLD, SIG_DFL);
+ 	ssh_signal(SIGINT, SIG_DFL);
+ 
++
+ 	/*
+ 	 * Register our connection.  This turns encryption off because we do
+ 	 * not have a key.
+@@ -1212,6 +1282,7 @@
+ 
+ 	check_ip_options(ssh);
+ 
++
+ 	/* Prepare the channels layer */
+ 	channel_init_channels(ssh);
+ 	channel_set_af(ssh, options.address_family);
+@@ -1250,6 +1321,8 @@
+ 	    rdomain == NULL ? "" : "\"");
+ 	free(laddr);
+ 
++
++
+ 	/*
+ 	 * We don't want to listen forever unless the other side
+ 	 * successfully authenticates itself.  So we set up an alarm which is
+@@ -1271,9 +1344,13 @@
+ 			fatal("login grace time setitimer failed");
+ 	}
+ 
++	/*
++	debug_f("before exchange!");
+ 	if ((r = kex_exchange_identification(ssh, -1,
+ 	    options.version_addendum)) != 0)
+ 		sshpkt_fatal(ssh, r, "banner exchange");
++	debug_f("after exchange!");
++	*/
+ 
+ 	ssh_packet_set_nonblocking(ssh);
+ 
+@@ -1296,12 +1373,15 @@
+ 	if (privsep_preauth(ssh) != 1)
+ 		fatal("privsep_preauth failed");
+ 
++	printf("right after preauth, fd is %d\n", pmonitor->m_sendfd);
++
+ 	/* Now user is authenticated */
+ 
+ 	/*
+ 	 * Cancel the alarm we set to limit the time taken for
+ 	 * authentication.
+ 	 */
++	printf("!!!!!!!!!!!!!!!authenticated!!!!!!!!!!!!!!!!!!\n");
+ 	timerclear(&itv.it_interval);
+ 	timerclear(&itv.it_value);
+ 	if (setitimer(ITIMER_REAL, &itv, NULL) == -1)
+diff -aruN openssh-portable/sshd.c openssh-portable-fuzz-with-msg-gen-lib/sshd.c
+--- openssh-portable/sshd.c	2025-12-23 00:28:41.400316000 +0000
++++ openssh-portable-fuzz-with-msg-gen-lib/sshd.c	2025-12-22 20:56:38.077579000 +0000
+@@ -934,6 +934,7 @@
+ 	u_char rnd[256];
+ 	sigset_t nsigset, osigset;
+ 
++
+ 	/* pipes connected to unauthenticated child sshd processes */
+ 	child_alloc();
+ 	startup_pollfd = xcalloc(options.max_startups, sizeof(int));
+@@ -1015,16 +1016,20 @@
+ 		}
+ 
+ 		/* Wait until a connection arrives or a child exits. */
++#if 0
+ 		ret = ppoll(pfd, npfd, NULL, &osigset);
+ 		if (ret == -1 && errno != EINTR) {
+ 			error("ppoll: %.100s", strerror(errno));
+ 			if (errno == EINVAL)
+ 				cleanup_exit(1); /* can't recover */
+ 		}
++#endif
++		ret = 1;
+ 		sigprocmask(SIG_SETMASK, &osigset, NULL);
+ 		if (ret == -1)
+ 			continue;
+ 
++		debug_f("options.max_startups's value is %d\n", options.max_startups);
+ 		for (i = 0; i < options.max_startups; i++) {
+ 			if (children[i].pipefd == -1 ||
+ 			    startup_pollfd[i] == -1 ||
+@@ -1127,9 +1132,13 @@
+ 			}
+ 		}
+ 		for (i = 0; i < num_listen_socks; i++) {
++			if (i == 0)
++				goto next;
+ 			if (!(pfd[i].revents & POLLIN))
+ 				continue;
++next:
+ 			fromlen = sizeof(from);
++			/*
+ 			*newsock = accept(listen_socks[i],
+ 			    (struct sockaddr *)&from, &fromlen);
+ 			if (*newsock == -1) {
+@@ -1141,6 +1150,8 @@
+ 					usleep(100 * 1000);
+ 				continue;
+ 			}
++			*/
++			*newsock = STDIN_FILENO;
+ 			if (unset_nonblock(*newsock) == -1) {
+ 				close(*newsock);
+ 				continue;
+@@ -1152,6 +1163,7 @@
+ 				close(*newsock);
+ 				continue;
+ 			}
++			/*
+ 			if (drop_connection(*newsock,
+ 			    children_active, config_s[0])) {
+ 				close(*newsock);
+@@ -1159,6 +1171,7 @@
+ 				close(config_s[1]);
+ 				continue;
+ 			}
++			*/
+ 
+ 			/*
+ 			 * Got connection.  Fork a child to handle it, unless
+@@ -1524,7 +1537,7 @@
+ 		fatal("Config test connection parameter (-C) provided without "
+ 		    "test mode (-T)");
+ 
+-	debug("sshd version %s, %s", SSH_VERSION, SSH_OPENSSL_VERSION);
++	//debug("sshd version %s, %s", SSH_VERSION, SSH_OPENSSL_VERSION);
+ 	if (uname(&utsname) != 0) {
+ 		memset(&utsname, 0, sizeof(utsname));
+ 		strlcpy(utsname.sysname, "UNKNOWN", sizeof(utsname.sysname));
+@@ -1680,8 +1693,7 @@
+ 		if ((fp = sshkey_fingerprint(pubkey, options.fingerprint_hash,
+ 		    SSH_FP_DEFAULT)) == NULL)
+ 			fatal("sshkey_fingerprint failed");
+-		debug("%s host key #%d: %s %s",
+-		    key ? "private" : "agent", i, sshkey_ssh_name(pubkey), fp);
++		// debug("%s host key #%d: %s %s", key ? "private" : "agent", i, sshkey_ssh_name(pubkey), fp);
+ 		free(fp);
+ 	}
+ 	accumulate_host_timing_secret(cfg, NULL);
+diff -aruN openssh-portable/sshd_config openssh-portable-fuzz-with-msg-gen-lib/sshd_config
+--- openssh-portable/sshd_config	2025-12-23 00:28:38.530103000 +0000
++++ openssh-portable-fuzz-with-msg-gen-lib/sshd_config	2025-12-22 20:56:47.460155000 +0000
+@@ -10,7 +10,7 @@
+ # possible, but leave them commented.  Uncommented options override the
+ # default value.
+ 
+-#Port 22
++Port 2222
+ #AddressFamily any
+ #ListenAddress 0.0.0.0
+ #ListenAddress ::
+@@ -116,3 +116,8 @@
+ #	AllowTcpForwarding no
+ #	PermitTTY no
+ #	ForceCommand cvs server
++
++HostKey /opt/openssh-portable/ssh_host_rsa_key
++HostKey /opt/openssh-portable/ssh_host_ecdsa_key
++HostKey /opt/openssh-portable/ssh_host_ed25519_key
++
+diff -aruN openssh-portable/utf8.c openssh-portable-fuzz-with-msg-gen-lib/utf8.c
+--- openssh-portable/utf8.c	2025-12-23 00:28:38.531713000 +0000
++++ openssh-portable-fuzz-with-msg-gen-lib/utf8.c	2025-12-22 20:56:45.116151000 +0000
+@@ -33,7 +33,7 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #if defined(HAVE_STRNVIS) && defined(HAVE_VIS_H) && !defined(BROKEN_STRNVIS)
+-# include <vis.h>
++# include <openbsd_vis.h>
+ #endif
+ #ifdef HAVE_WCHAR_H
+ # include <wchar.h>
+@@ -192,7 +192,7 @@
+ 					ret = -1;
+ 					break;
+ 				}
+-				tp = vis(dp, *sp, VIS_OCTAL | VIS_ALL, 0);
++				tp = openbsd_vis(dp, *sp, VIS_OCTAL | VIS_ALL, 0);
+ 				width = tp - dp;
+ 				total_width += width;
+ 				dp = tp;
