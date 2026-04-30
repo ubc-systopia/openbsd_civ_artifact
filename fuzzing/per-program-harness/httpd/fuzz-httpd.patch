@@ -1,0 +1,398 @@
+--- a/libimsg/src/lib/libutil/Makefile
++++ b/libimsg/src/lib/libutil/Makefile
+@@ -3,6 +3,7 @@
+ LOCALBASE?=	/usr/local
+ SHAREDIR?=	/usr/local
+ LIB=		imsg
++SHLIB_MAJOR=	0
+ LIBDIR=		${LOCALBASE}/lib
+ INCSDIR=	${LOCALBASE}/include
+ CFLAGS+=	-Werror -Wstrict-prototypes -I${.CURDIR}
+--- a/src/usr.bin/htpasswd/Makefile
++++ b/src/usr.bin/htpasswd/Makefile
+@@ -10,7 +10,7 @@
+ 	blowfish.c \
+ 	cryptutil.c
+ 
+-LDADD=		/usr/local/lib/libcrypto.a
++LDADD=		/usr/lib/libcrypto.a
+ 
+ DPADD=		${LIBCRYPTO}
+ 
+--- a/src/usr.sbin/httpd/Makefile
++++ b/src/usr.sbin/httpd/Makefile
+@@ -16,18 +16,23 @@
+ 
+ MAN=		httpd.8 httpd.conf.5
+ 
+-LDADD=		../../../libevent/src/lib/libevent/libevent.a \
+-		../../../libimsg/src/lib/libutil/libimsg.a
+-LDADD+= 	/usr/local/lib/libtls.a \
+-		/usr/local/lib/libssl.a \
+-		/usr/local/lib/libcrypto.a
+-LDADD+= 	-lcrypt -lprocstat -pthread
++LDFLAGS+=	-L${.CURDIR}/../../../libimsg/src/lib/libutil -Wl,-rpath,${.CURDIR}/../../../libimsg/src/lib/libutil
++LDFLAGS+=	-L${LOCALBASE}/lib -Wl,-rpath,${LOCALBASE}/lib
++
++LDADD=		${BUFFER_CHECKER_ROOT}/libbuffer_check.so
++LDADD+=		../../../libevent/src/lib/libevent/libevent.a \
++		../../../libimsg/src/lib/libutil/libimsg.so
++LDADD+=		-ltls \
++		-lssl \
++		-lcrypto
++LDADD+=		-lcrypt -lprocstat -pthread -lmd
+ SRCS+=		patterns.c
+ MAN+=		patterns.7
+ 
+ DPADD=		${LIBTLS} ${LIBSSL} ${LIBCRYPTO}
+-#DEBUG=		-g -DDEBUG=3 -O0
++DEBUG=		-g -DDEBUG=3 -O0
+ CFLAGS+=	-Wall -I${.CURDIR}
++CFLAGS+=	-fsanitize-recover=memory
+ CFLAGS+=	-Wstrict-prototypes -Wmissing-prototypes
+ CFLAGS+=	-Wmissing-declarations
+ CFLAGS+=	-Wshadow -Wpointer-arith
+--- a/src/usr.sbin/httpd/httpd.h
++++ b/src/usr.sbin/httpd/httpd.h
+@@ -222,7 +222,8 @@
+ 	IMSG_LOG_ACCESS,
+ 	IMSG_LOG_ERROR,
+ 	IMSG_LOG_OPEN,
+-	IMSG_TLSTICKET_REKEY
++	IMSG_TLSTICKET_REKEY,
++	IMSG_EOM
+ };
+ 
+ enum privsep_procid {
+--- a/src/usr.sbin/httpd/httpd.c
++++ b/src/usr.sbin/httpd/httpd.c
+@@ -49,6 +49,7 @@
+ 
+ __dead void	 usage(void);
+ 
++void ptr_check_skip(const void *data, size_t size);
+ int		 parent_configure(struct httpd *);
+ void		 parent_configure_done(struct httpd *);
+ void		 parent_reload(struct httpd *, unsigned int, const char *);
+@@ -71,6 +72,8 @@
+ 
+ enum privsep_procid privsep_process;
+ 
++int eom_flag = 0;
++
+ void
+ parent_sig_handler(int sig, short event, void *arg)
+ {
+@@ -113,7 +116,58 @@
+ 	exit(1);
+ }
+ 
++
++size_t
++get_payload(uint16_t size, char *buf)
++{
++	ssize_t bytes_read;
++	size_t total_read = 0;
++
++	while (total_read < size) {
++		bytes_read = read(STDIN_FILENO, buf + total_read, size - total_read);
++		if (bytes_read <= 0) {
++			break;
++		}
++		total_read += bytes_read;
++	}
++
++	return total_read;
++}
++
+ int
++get_metadata(uint8_t *compartment, uint8_t *instance, uint8_t *type,
++    uint16_t *size)
++{
++	ssize_t bytes_read;
++
++	/* Read compartment (1 byte) */
++	bytes_read = read(STDIN_FILENO, compartment, sizeof(uint8_t));
++	if (bytes_read != sizeof(uint8_t)) {
++		return 1;
++	}
++
++	/* Read instance (1 byte) */
++	bytes_read = read(STDIN_FILENO, instance, sizeof(uint8_t));
++	if (bytes_read != sizeof(uint8_t)) {
++		return 1;
++	}
++
++	/* Read type (1 byte) */
++	bytes_read = read(STDIN_FILENO, type, sizeof(uint8_t));
++	if (bytes_read != sizeof(uint8_t)) {
++		return 1;
++	}
++
++	/* Read size (2 bytes) */
++	bytes_read = read(STDIN_FILENO, size, sizeof(uint16_t));
++	if (bytes_read != sizeof(uint16_t)) {
++		return 1;
++	}
++
++	return 0;
++}
++
++int
+ main(int argc, char *argv[])
+ {
+ 	int			 c;
+@@ -266,6 +320,55 @@
+ 	if (parent_configure(env) == -1)
+ 		fatalx("configuration failed");
+ 
++	/* Fuzzing harness: feed imsg messages from stdin to child processes */
++	struct imsgbuf server_ibuf;
++	int server_fd = ps->ps_pipes[PROC_SERVER][0].pp_pipes[PROC_PARENT][0];
++	imsg_init(&server_ibuf, server_fd);
++
++	struct imsgbuf logger_ibuf;
++	int logger_fd = ps->ps_pipes[PROC_LOGGER][0].pp_pipes[PROC_PARENT][0];
++	imsg_init(&logger_ibuf, logger_fd);
++
++	while (1) {
++		uint8_t compartment;
++		uint8_t instance;
++		uint8_t type;
++		uint16_t size;
++		char payload[65535];
++		uint16_t payload_size;
++
++		if (get_metadata(&compartment, &instance, &type, &size) != 0)
++			break;
++
++		size = size % 8192;
++		compartment = (compartment % 2) + 1;	/* values 1 or 2 */
++		type = type % 22;
++
++		payload_size = get_payload(size, payload);
++
++		struct imsgbuf *target_ibuf = NULL;
++		switch (compartment) {
++		case 1:
++			target_ibuf = &server_ibuf;
++			break;
++		case 2:
++			target_ibuf = &logger_ibuf;
++			break;
++		}
++
++		if (target_ibuf != NULL) {
++			ptr_check_skip(payload, payload_size);
++			imsg_compose(target_ibuf, type, 0, 0, -1, payload,
++			    payload_size);
++			imsg_flush(target_ibuf);
++		}
++	}
++
++	imsg_compose(&server_ibuf, IMSG_EOM, 0, 0, -1, NULL, 0);
++	imsg_compose(&logger_ibuf, IMSG_EOM, 0, 0, -1, NULL, 0);
++	imsg_flush(&server_ibuf);
++	imsg_flush(&logger_ibuf);
++
+ 	event_dispatch();
+ 
+ 	parent_shutdown(env);
+@@ -420,6 +523,12 @@
+ 	case IMSG_CFG_DONE:
+ 		parent_configure_done(env);
+ 		break;
++	case IMSG_EOM:
++		if (eom_flag == 1)
++			exit(1);
++		else
++			eom_flag = 1;
++		break;
+ 	default:
+ 		return (-1);
+ 	}
+@@ -459,6 +568,12 @@
+ 	case IMSG_LOG_OPEN:
+ 		if (logger_open_priv(imsg) == -1)
+ 			fatalx("failed to open log file");
++		break;
++	case IMSG_EOM:
++		if (eom_flag == 1)
++			exit(1);
++		else
++			eom_flag = 1;
+ 		break;
+ 	default:
+ 		return (-1);
+--- a/src/usr.sbin/httpd/proc.c
++++ b/src/usr.sbin/httpd/proc.c
+@@ -37,6 +37,7 @@
+ 
+ #include "httpd.h"
+ 
++void ptr_check_skip(const void *data, size_t size);
+ void	 proc_exec(struct privsep *, struct privsep_proc *, unsigned int, int,
+ 	    int, char **);
+ void	 proc_setup(struct privsep *, struct privsep_proc *, unsigned int);
+@@ -111,6 +112,8 @@
+ 			snprintf(num, sizeof(num), "%u", i);
+ 
+ 			fd = ps->ps_pipes[p->p_id][i].pp_pipes[PROC_PARENT][0];
++			/* Do not fork: child processes run inline for fuzzing */
++#if 0
+ 			ps->ps_pipes[p->p_id][i].pp_pipes[PROC_PARENT][0] = -1;
+ 
+ 			switch (fork()) {
+@@ -148,6 +151,7 @@
+ 				close(fd);
+ 				break;
+ 			}
++#endif
+ 		}
+ 	}
+ 	free(nargv);
+@@ -257,6 +261,9 @@
+ 	struct privsep_pipes	*pp = ps->ps_pp;
+ 	struct imsgev		*iev;
+ 
++	if (dst != 0 || n != 0)
++		exit(-1);
++
+ 	if (ps->ps_ievs[dst] == NULL) {
+ #if DEBUG > 1
+ 		log_debug("%s: %s src %d %d to dst %d %d not connected",
+@@ -423,6 +430,7 @@
+ 
+ 			pf.pf_procid = src;
+ 			pf.pf_instance = i;
++			ptr_check_skip(&pf, sizeof(pf));
+ 			if (proc_compose_imsg(ps, dst, j, IMSG_CTL_PROCFD,
+ 			    -1, pb->pp_pipes[src][i], &pf, sizeof(pf)) == -1)
+ 				fatal("%s: proc_compose_imsg", __func__);
+@@ -825,20 +833,6 @@
+ int
+ proc_flush_imsg(struct privsep *ps, enum privsep_procid id, int n)
+ {
+-	struct imsgbuf	*ibuf;
+-	int		 m, ret = 0;
+-
+-	proc_range(ps, id, &n, &m);
+-	for (; n < m; n++) {
+-		if ((ibuf = proc_ibuf(ps, id, n)) == NULL)
+-			return (-1);
+-		do {
+-			ret = imsg_flush(ibuf);
+-		} while (ret == -1 && errno == EAGAIN);
+-		if (ret == -1)
+-			break;
+-		imsg_event_add(&ps->ps_ievs[id][n]);
+-	}
+-
+-	return (ret);
++	/* Return immediately: fuzzing harness sends synchronously via imsg_flush */
++	return 0;
+ }
+--- a/src/usr.sbin/httpd/config.c	2026-04-16 02:22:06.377227000 -0700
++++ b/src/usr.sbin/httpd/config.c	2026-04-16 02:23:33.906574000 -0700
+@@ -32,6 +32,7 @@
+ 
+ #include "httpd.h"
+ 
++void ptr_check_skip(const void *data, size_t size);
+ int	 config_getserver_config(struct httpd *, struct server *,
+ 	    struct imsg *);
+ int	 config_getserver_auth(struct httpd *, struct server_config *);
+@@ -158,6 +159,35 @@
+ 	return (0);
+ }
+ 
++static void
++clear_config_server_ptrs(struct server_config *cfg)
++{
++	if (cfg == NULL)
++		return;
++
++	cfg->default_type.media_encoding = NULL;
++	memset(&cfg->default_type.media_entry, 0, sizeof(cfg->default_type.media_entry));
++
++	cfg->tls_ca = NULL;
++	cfg->tls_ca_file = NULL;
++	cfg->tls_cert = NULL;
++	cfg->tls_cert_file = NULL;
++	cfg->tls_crl = NULL;
++	cfg->tls_crl_file = NULL;
++	cfg->tls_key = NULL;
++	cfg->tls_key_file = NULL;
++	cfg->tls_ocsp_staple = NULL;
++	cfg->tls_ocsp_staple_file = NULL;
++
++	cfg->logaccess = NULL;
++	cfg->logerror = NULL;
++	cfg->auth = NULL;
++	cfg->return_uri = NULL;
++
++	memset(&cfg->fcgiparams, 0, sizeof(cfg->fcgiparams));
++	memset(&cfg->entry, 0, sizeof(cfg->entry));
++}
++
+ int
+ config_setserver(struct httpd *env, struct server *srv)
+ {
+@@ -186,6 +216,8 @@
+ 		    ps->ps_title[id], srv->srv_s);
+ 
+ 		memcpy(&s, &srv->srv_conf, sizeof(s));
++		clear_config_server_ptrs(&s);
++		ptr_check_skip(&s, sizeof(s));
+ 
+ 		c = 0;
+ 		iov[c].iov_base = &s;
+@@ -201,12 +233,8 @@
+ 			n = -1;
+ 			proc_range(ps, id, &n, &m);
+ 			for (n = 0; n < m; n++) {
+-				if (srv->srv_s == -1)
+-					fd = -1;
+-				else if ((fd = dup(srv->srv_s)) == -1)
+-					return (-1);
+ 				if (proc_composev_imsg(ps, id, n,
+-				    IMSG_CFG_SERVER, -1, fd, iov, c) != 0) {
++				    IMSG_CFG_SERVER, -1, -1, iov, c) != 0) {
+ 					log_warn("%s: failed to compose "
+ 					    "IMSG_CFG_SERVER imsg for `%s'",
+ 					    __func__, srv->srv_conf.name);
+@@ -225,6 +253,7 @@
+ 			/* Configure TLS if necessary. */
+ 			config_setserver_tls(env, srv);
+ 		} else {
++			clear_config_server_ptrs(&s);
+ 			if (proc_composev(ps, id, IMSG_CFG_SERVER,
+ 			    iov, c) != 0) {
+ 				log_warn("%s: failed to compose "
+@@ -828,6 +857,7 @@
+ 		DPRINTF("%s: sending media \"%s\" to %s", __func__,
+ 		    media->media_name, ps->ps_title[id]);
+ 
++		memset(&(media->media_entry), 0, sizeof(media->media_entry));
+ 		proc_compose(ps, id, IMSG_CFG_MEDIA, media, sizeof(*media));
+ 	}
+ 
+@@ -865,6 +895,7 @@
+ 	struct privsep		*ps = env->sc_ps;
+ 	int			 id;
+ 	unsigned int		 what;
++	struct auth		 myauth;
+ 
+ 	for (id = 0; id < PROC_MAX; id++) {
+ 		what = ps->ps_what[id];
+@@ -875,7 +906,9 @@
+ 		DPRINTF("%s: sending auth \"%s[%u]\" to %s", __func__,
+ 		    auth->auth_htpasswd, auth->auth_id, ps->ps_title[id]);
+ 
+-		proc_compose(ps, id, IMSG_CFG_AUTH, auth, sizeof(*auth));
++		memcpy(&myauth, auth, sizeof(struct auth));
++		memset(&myauth.auth_entry, 0, sizeof(myauth.auth_entry));
++		proc_compose(ps, id, IMSG_CFG_AUTH, &myauth, sizeof(*auth));
+ 	}
+ 
+ 	return (0);
