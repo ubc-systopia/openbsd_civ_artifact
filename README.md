@@ -4,6 +4,8 @@
 
 ## Bug ID Mapping
 
+Note: These reports do not include CIVs identified by the OpenBSD team.
+
 - `B1`: [bug-reports/bgpd/(2025-07-10) Missing Null Terminator Check for pftable_msg.md](bug-reports/bgpd/%282025-07-10%29%20Missing%20Null%20Terminator%20Check%20for%20pftable_msg.md)
 - `B2`: [bug-reports/bgpd/(2025-07-10) Stack Over-Read and Over-Write in log_evpnaddr.md](bug-reports/bgpd/%282025-07-10%29%20Stack%20Over-Read%20and%20Over-Write%20in%20log_evpnaddr.md)
 - `B3`: [bug-reports/bgpd/Stack Over-Read via Unterminated IMSG_CTL_RELOAD Reason.md](bug-reports/bgpd/Stack%20Over-Read%20via%20Unterminated%20IMSG_CTL_RELOAD%20Reason.md)
