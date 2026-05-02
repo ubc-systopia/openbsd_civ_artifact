@@ -1,24 +1,21 @@
-diff -ruN -x .git ./dhcpd/src/usr.sbin/dhcpd/Makefile ./fuzz-dhcpd/src/usr.sbin/dhcpd/Makefile
---- ./dhcpd/src/usr.sbin/dhcpd/Makefile	2026-04-04 13:59:36.307063000 -0700
-+++ ./fuzz-dhcpd/src/usr.sbin/dhcpd/Makefile	2026-04-04 13:56:58.117677000 -0700
-@@ -9,10 +9,11 @@
- PROG=	dhcpd
+--- a/src/usr.sbin/dhcpd/Makefile	2026-05-01 22:19:13.704024000 -0700
++++ b/src/usr.sbin/dhcpd/Makefile	2026-05-01 22:08:19.787471000 -0700
+@@ -10,9 +10,11 @@
  MAN=	dhcpd.8 dhcpd.conf.5 dhcpd.leases.5 dhcp-options.5
  
--LDADD+=-lcrypto -lmd
+ LDADD+=-lcrypto -lmd
 -CFLAGS+=-Wall -D__dead=''
-+LDADD+=-lcrypto -lmd -lmsg_generator
-+LDFLAGS+=-L$(BUFFER_CHECKER_ROOT)
-+CFLAGS+=-Wall -D__dead='' -I$(BUFFER_CHECKER_ROOT)
++LDADD+=${BUFFER_CHECKER_ROOT}/libmsg_generator.a
++CFLAGS+=-Wall -D__dead='' -I${BUFFER_CHECKER_ROOT}
++CFLAGS+=-fsanitize-recover=memory
  
  .include <bsd.prog.mk>
 -CFLAGS+=-Wstrict-prototypes -Wmissing-prototypes
 +CFLAGS+=-Wstrict-prototypes -Wmissing-prototypes -O0 -g
  CFLAGS+=-Wmissing-declarations
  CFLAGS+=-Wshadow -Wpointer-arith -Wcast-qual
-diff -ruN -x .git ./dhcpd/src/usr.sbin/dhcpd/dhcpd.c ./fuzz-dhcpd/src/usr.sbin/dhcpd/dhcpd.c
---- ./dhcpd/src/usr.sbin/dhcpd/dhcpd.c	2026-04-04 13:59:36.935168000 -0700
-+++ ./fuzz-dhcpd/src/usr.sbin/dhcpd/dhcpd.c	2026-04-03 23:05:39.118550000 -0700
+--- a/src/usr.sbin/dhcpd/dhcpd.c	2026-05-01 22:19:13.705791000 -0700
++++ b/src/usr.sbin/dhcpd/dhcpd.c	2026-05-01 22:07:03.995463000 -0700
 @@ -61,6 +61,7 @@
  #include "dhcpd.h"
  #include "log.h"
@@ -32,83 +29,74 @@ diff -ruN -x .git ./dhcpd/src/usr.sbin/dhcpd/dhcpd.c ./fuzz-dhcpd/src/usr.sbin/d
  		fatalx("user \"_dhcp\" not found");
  
 -#ifndef NO_PF
-+#if 0
++#if 0	/* FUZZ: skip the privsep fork; harness drives pftable_handler in-process */
  	/* don't go near /dev/pf unless we actually intend to use it */
  	if ((abandoned_tab != NULL) ||
  	    (changedmac_tab != NULL) ||
-@@ -247,7 +248,66 @@
+@@ -247,7 +248,50 @@
  			break;
  		}
  	}
 -#endif /* NO_PF */
-+#endif /*GaNO_PF */
++#endif
 +
-+
++	/* FUZZ: drive pftable_handler from stdin via libmsg_generator.
++	 * One compartment, five real pf_cmd types ('A' add, 'C' change,
++	 * 'L' lease, 'R' rebind, 'K' kill).  After stdin is exhausted one
++	 * EOM (cmd.type = 'G') is dispatched; pftable_handler's 'G' case
++	 * calls eom_counter_inc() so the library exits cleanly. */
 +	if (pipe(pfpipe) == -1)
 +		fatal("pipe");
 +
++	{
++		struct msg_interface	 iface;
++		struct msg_data		 msg;
++		struct msg_data		 eom_msg;
++		const char		 valid_types[] = {'A', 'C', 'L', 'R', 'K'};
 +
-+	/* Initialize the message generator interface */
-+	struct msg_interface iface;
-+	char valid_types[] = {'A', 'C', 'L', 'R', 'K'};
++		if (msg_interface_init(&iface, STDIN_FILENO, 1,
++		    sizeof(valid_types)) != MSG_GEN_SUCCESS)
++			fatalx("msg_interface_init failed");
++		msg_interface_set_endpoint(&iface, 0,
++		    (void *)(intptr_t)pfpipe[1]);
++		msg_interface_set_eom_type(&iface, 'G');
 +
-+	/* Initialize with 1 compartment (pftable_handler) and 5 message types (A, C, L, R, K) */
-+	if (msg_interface_init(&iface, STDIN_FILENO, 1, 5) != MSG_GEN_SUCCESS) {
-+		fatalx("Failed to initialize message interface");
-+	}
-+
-+	/* Default 1:1 message type mapping is used (0->0, 1->1, 2->2, 3->3, 4->4) */
-+	/* This maps to valid_types indices: 0='A', 1='C', 2='L', 3='R', 4='K' */
-+
-+	/* Store the pipe fd as endpoint for compartment 0 (pftable_handler) */
-+	msg_interface_set_endpoint(&iface, 0, (void *)(intptr_t)pfpipe[1]);
-+
-+	/* Generate and send messages */
-+	struct msg_data msg;
-+	int ret;
-+	static int counter = 0;
-+
-+	while ((ret = msg_generate(&iface, &msg)) == MSG_GEN_SUCCESS) {
-+		if (counter > 10)
-+			break;
-+		counter++;
-+
-+		/* Extract auxiliary data - first 4 bytes can be msg_id */
-+		uint32_t msg_id = *(uint32_t *)&msg.aux_data[0];
-+
-+		/* Prepare payload with proper size for pf_cmd */
-+		size_t send_size = sizeof(struct pf_cmd);
-+
-+		/* Set the type field in the pf_cmd structure */
-+		if (msg.actual_payload_size >= sizeof(struct pf_cmd)) {
-+			((struct pf_cmd *)msg.payload)->type = valid_types[msg.type];
++		while (msg_generate(&iface, &msg) == MSG_GEN_SUCCESS) {
++			if (msg.actual_payload_size < sizeof(struct pf_cmd))
++				continue;
++			((struct pf_cmd *)msg.payload)->type =
++			    valid_types[msg.type];
++			atomicio(vwrite, pfpipe[1], msg.payload,
++			    sizeof(struct pf_cmd));
 +		}
 +
-+		printf("Fuzzing: sending msg_type=%d, size=%zu, id=%u to pftable_handler\n",
-+		       msg.type, send_size, msg_id);
-+
-+		/* Write to pfpipe[1] */
-+		atomicio(vwrite, pfpipe[1], msg.payload, send_size);
++		if (msg_generate_eom(&iface, 0, &eom_msg) == MSG_GEN_SUCCESS) {
++			struct pf_cmd	cmd;
++			cmd.type = (char)eom_msg.type;
++			atomicio(vwrite, pfpipe[1], &cmd,
++			    sizeof(struct pf_cmd));
++		}
 +	}
 +
-+	struct pf_cmd my_cmd;
-+	my_cmd.type = 'G';
-+	atomicio(vwrite, pfpipe[1], &my_cmd, sizeof(struct pf_cmd));
-+
-+
 +	pftable_handler();
-+	// send with pfpipe[1]
-+	//
-+
++	/* NOTREACHED — pftable_handler's 'G' case calls eom_counter_inc()
++	 * which exits the process once the EOM has been received. */
 +
  
  	if (udpsockmode)
  		udpsock_startup(udpaddr);
-Binary files ./dhcpd/src/usr.sbin/dhcpd/dhcpd.core and ./fuzz-dhcpd/src/usr.sbin/dhcpd/dhcpd.core differ
-diff -ruN -x .git ./dhcpd/src/usr.sbin/dhcpd/pfutils.c ./fuzz-dhcpd/src/usr.sbin/dhcpd/pfutils.c
---- ./dhcpd/src/usr.sbin/dhcpd/pfutils.c	2026-04-04 13:59:36.935887000 -0700
-+++ ./fuzz-dhcpd/src/usr.sbin/dhcpd/pfutils.c	2026-04-03 23:05:39.119000000 -0700
-@@ -54,18 +54,22 @@
+--- a/src/usr.sbin/dhcpd/pfutils.c	2026-05-01 22:19:13.706954000 -0700
++++ b/src/usr.sbin/dhcpd/pfutils.c	2026-05-01 22:07:54.094452000 -0700
+@@ -40,6 +40,8 @@
+ #include "dhcpd.h"
+ #include "log.h"
+ 
++#include <msg_generator.h>
++
+ extern struct passwd *pw;
+ extern int pfpipe[2];
+ extern int gotpipe;
+@@ -54,18 +56,22 @@
  	struct pollfd pfd[1];
  	int l, r, fd, nfds;
  
@@ -132,12 +120,15 @@ diff -ruN -x .git ./dhcpd/src/usr.sbin/dhcpd/pfutils.c ./fuzz-dhcpd/src/usr.sbin
  
  	/* no filesystem visibility */
  #ifdef __OpenBSD__
-@@ -135,6 +139,8 @@
+@@ -134,6 +140,11 @@
+ 				 * further action is required.
  				 */
  				pf_change_table(fd, 0, cmd.ip, leased_tab);
- 				break;
++				break;
 +			case 'G':
-+				exit(1);
++				/* FUZZ: libmsg_generator EOM hook; library exits
++				 * once every compartment has dispatched its EOM. */
++				eom_counter_inc();
+ 				break;
  			default:
  				break;
- 			}

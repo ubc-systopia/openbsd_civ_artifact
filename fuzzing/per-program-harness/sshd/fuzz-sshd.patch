@@ -33,10 +33,10 @@ diff -aruN openssh-portable/BUFFER_CHECKER_FIX.md openssh-portable-fuzz-with-msg
 +
 +#### 1. Add BUFFER_CHECKER_ROOT Variable (Line 53)
 +```makefile
-+BUFFER_CHECKER_ROOT ?= /opt/ptr_checker
++BUFFER_CHECKER_ROOT ?= /home/share/ptr_checker
 +```
 +
-+This uses the `BUFFER_CHECKER_ROOT` environment variable if set, otherwise defaults to `/opt/ptr_checker`.
++This uses the `BUFFER_CHECKER_ROOT` environment variable if set, otherwise defaults to `/home/share/ptr_checker`.
 +
 +#### 2. Add Include Path to CPPFLAGS (Line 54)
 +```makefile
@@ -66,7 +66,7 @@ diff -aruN openssh-portable/BUFFER_CHECKER_FIX.md openssh-portable-fuzz-with-msg
 +
 +### 1. Navigate to openssh directory
 +```bash
-+cd /opt/openssh-portable-fuzz
++cd /home/share/openssh-portable-fuzz
 +# Or using pwd:
 +cd $(pwd)
 +```
@@ -94,7 +94,7 @@ diff -aruN openssh-portable/BUFFER_CHECKER_FIX.md openssh-portable-fuzz-with-msg
 +
 +Expected output should show:
 +```
-+libbuffer_check.so => /opt/ptr_checker/libbuffer_check.so (0x...)
++libbuffer_check.so => /home/share/ptr_checker/libbuffer_check.so (0x...)
 +```
 +
 +No "not found" errors.
@@ -124,10 +124,10 @@ diff -aruN openssh-portable/BUFFER_CHECKER_FIX.md openssh-portable-fuzz-with-msg
 +
 +# 2. Run configure with your options
 +./configure --with-kerberos5 --with-pam \
-+    --prefix=/path/to/openssh-portable-fuzz \
-+    --sbindir=/path/to/openssh-portable-fuzz \
-+    --libexecdir=/path/to/openssh-portable-fuzz \
-+    --sysconfdir=/path/to/openssh-portable-fuzz \
++    --prefix=$HOME/openssh-portable-fuzz \
++    --sbindir=$HOME/openssh-portable-fuzz \
++    --libexecdir=$HOME/openssh-portable-fuzz \
++    --sysconfdir=$HOME/openssh-portable-fuzz \
 +    CFLAGS='-O0 -g' \
 +    CC=afl-clang-lto
 +
@@ -183,7 +183,7 @@ diff -aruN openssh-portable/BUFFER_CHECKER_FIX.md openssh-portable-fuzz-with-msg
 +
 +```bash
 +# Navigate to openssh directory
-+cd /opt/openssh-portable-fuzz
++cd /home/share/openssh-portable-fuzz
 +
 +# Edit Makefile.in (apply the 4 changes described above)
 +vi Makefile.in
@@ -208,7 +208,7 @@ diff -aruN openssh-portable/Makefile.in openssh-portable-fuzz-with-msg-gen-lib/M
 +CFLAGS=@CFLAGS@ -fsanitize-recover=memory
  CFLAGS_NOPIE=@CFLAGS_NOPIE@
 -CPPFLAGS=-I. -I$(srcdir) @CPPFLAGS@ $(PATHS) @DEFS@
-+BUFFER_CHECKER_ROOT ?= /opt/ptr_checker
++BUFFER_CHECKER_ROOT ?= /home/share/ptr_checker
 +CPPFLAGS=-I. -I$(srcdir) @CPPFLAGS@ -I$(BUFFER_CHECKER_ROOT) $(PATHS) @DEFS@
  PICFLAG=@PICFLAG@
  LIBS=@LIBS@
@@ -1656,9 +1656,9 @@ diff -aruN openssh-portable/sshd_config openssh-portable-fuzz-with-msg-gen-lib/s
  #	PermitTTY no
  #	ForceCommand cvs server
 +
-+HostKey /opt/openssh-portable/ssh_host_rsa_key
-+HostKey /opt/openssh-portable/ssh_host_ecdsa_key
-+HostKey /opt/openssh-portable/ssh_host_ed25519_key
++HostKey /home/share/openssh-portable/ssh_host_rsa_key
++HostKey /home/share/openssh-portable/ssh_host_ecdsa_key
++HostKey /home/share/openssh-portable/ssh_host_ed25519_key
 +
 diff -aruN openssh-portable/utf8.c openssh-portable-fuzz-with-msg-gen-lib/utf8.c
 --- openssh-portable/utf8.c	2025-12-23 00:28:38.531713000 +0000

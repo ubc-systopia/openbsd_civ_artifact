@@ -1,0 +1,181 @@
+diff -ruN -x .git tmux-orig/Makefile.am fuzz-tmux/Makefile.am
+--- tmux-orig/Makefile.am	2026-04-30 15:52:25.747488000 -0700
++++ fuzz-tmux/Makefile.am	2026-04-30 15:54:06.305986000 -0700
+@@ -17,6 +17,9 @@
+ 
+ # Additional object files.
+ LDADD = $(LIBOBJS)
++LDADD += -L$(BUFFER_CHECKER_ROOT) -lmsg_generator -lbuffer_check
++AM_CPPFLAGS += -I$(BUFFER_CHECKER_ROOT)
++AM_CFLAGS += -fsanitize-recover=memory
+ 
+ # Set flags for gcc.
+ if IS_GCC
+diff -ruN -x .git tmux-orig/proc.c fuzz-tmux/proc.c
+--- tmux-orig/proc.c	2026-04-30 15:51:25.727915000 -0700
++++ fuzz-tmux/proc.c	2026-04-30 15:52:36.998360000 -0700
+@@ -356,27 +356,20 @@
+ }
+ 
+ pid_t
+-proc_fork_and_daemon(int *fd)
++proc_fork_and_daemon(int *fd, int *other_side)
+ {
+-	pid_t	pid;
+ 	int	pair[2];
+ 
++	/*
++	 * Fuzzing harness: do not fork. Return both ends of the socketpair so
++	 * the caller can drive the server's imsg endpoint from the same
++	 * process.
++	 */
+ 	if (socketpair(AF_UNIX, SOCK_STREAM, PF_UNSPEC, pair) != 0)
+ 		fatal("socketpair failed");
+-	switch (pid = fork()) {
+-	case -1:
+-		fatal("fork failed");
+-	case 0:
+-		close(pair[0]);
+-		*fd = pair[1];
+-		if (daemon(1, 0) != 0)
+-			fatal("daemon failed");
+-		return (0);
+-	default:
+-		close(pair[1]);
+-		*fd = pair[0];
+-		return (pid);
+-	}
++	*fd = pair[0];
++	*other_side = pair[1];
++	return (0);
+ }
+ 
+ uid_t
+diff -ruN -x .git tmux-orig/server-client.c fuzz-tmux/server-client.c
+--- tmux-orig/server-client.c	2026-04-30 15:52:25.757992000 -0700
++++ fuzz-tmux/server-client.c	2026-04-30 15:53:56.927391000 -0700
+@@ -28,6 +28,7 @@
+ #include <unistd.h>
+ 
+ #include "tmux.h"
++#include <msg_generator.h>
+ 
+ enum mouse_where {
+ 	NOWHERE,
+@@ -3408,6 +3409,9 @@
+ 		break;
+ 	case MSG_READ_DONE:
+ 		file_read_done(&c->files, imsg);
++		break;
++	case MSG_EOM:
++		eom_counter_inc();
+ 		break;
+ 	}
+ }
+diff -ruN -x .git tmux-orig/server.c fuzz-tmux/server.c
+--- tmux-orig/server.c	2026-04-30 15:52:25.758214000 -0700
++++ fuzz-tmux/server.c	2026-04-30 15:53:34.199889000 -0700
+@@ -34,6 +34,7 @@
+ #include <unistd.h>
+ 
+ #include "tmux.h"
++#include <msg_generator.h>
+ 
+ /*
+  * Main server functions.
+@@ -176,6 +177,7 @@
+     int lockfd, char *lockfile)
+ {
+ 	int		 fd;
++	int		 other_side;
+ 	sigset_t	 set, oldset;
+ 	struct client	*c = NULL;
+ 	char		*cause = NULL;
+@@ -185,7 +187,7 @@
+ 	sigprocmask(SIG_BLOCK, &set, &oldset);
+ 
+ 	if (~flags & CLIENT_NOFORK) {
+-		if (proc_fork_and_daemon(&fd) != 0) {
++		if (proc_fork_and_daemon(&fd, &other_side) != 0) {
+ 			sigprocmask(SIG_SETMASK, &oldset, NULL);
+ 			return (fd);
+ 		}
+@@ -248,6 +250,51 @@
+ 	evtimer_add(&server_ev_tidy, &tv);
+ 
+ 	server_acl_init();
++
++	/*
++	 * Fuzzing harness: drive the server's IPC interface from stdin.
++	 * Synthesises a stream of imsg messages using the message generator
++	 * library and pushes them through `ibuf`, the server's end of the
++	 * socketpair created by proc_fork_and_daemon(). After stdin is
++	 * exhausted a single MSG_EOM is emitted; the dispatch handler in
++	 * server_client_dispatch() then calls eom_counter_inc(), which
++	 * exit(0)'s once one EOM per compartment has been received.
++	 */
++	{
++		struct imsgbuf		 ibuf;
++		struct msg_interface	 iface;
++		struct msg_data		 msg;
++		struct msg_data		 eom_msg;
++
++		imsgbuf_init(&ibuf, other_side);
++
++		/*
++		 * One compartment (the server). 41 valid message types in
++		 * tmux's protocol:
++		 *   indices  0-12  -> types 100-112 (MSG_IDENTIFY_*)
++		 *   indices 13-31  -> types 200-218 (MSG_COMMAND..MSG_FLAGS)
++		 *   indices 32-39  -> types 300-307 (MSG_READ_*..MSG_WRITE_*)
++		 *   index   40     -> type  12      (MSG_VERSION)
++		 */
++		msg_interface_init(&iface, STDIN_FILENO, 1, 41);
++		msg_interface_set_message_types_batch(&iface, 0, 13, 100);
++		msg_interface_set_message_types_batch(&iface, 13, 19, 187);
++		msg_interface_set_message_types_batch(&iface, 32, 8, 268);
++		msg_interface_set_message_type(&iface, 40, 12);
++		msg_interface_set_endpoint(&iface, 0, &ibuf);
++		msg_interface_set_eom_type(&iface, MSG_EOM);
++
++		while (msg_generate(&iface, &msg) == MSG_GEN_SUCCESS) {
++			imsg_compose(&ibuf, msg.type, 8, 0, msg.fd,
++			    msg.payload, msg.actual_payload_size);
++			imsgbuf_flush(&ibuf);
++		}
++
++		if (msg_generate_eom(&iface, 0, &eom_msg) == MSG_GEN_SUCCESS) {
++			imsg_compose(&ibuf, eom_msg.type, 8, 0, -1, NULL, 0);
++			imsgbuf_flush(&ibuf);
++		}
++	}
+ 
+ 	server_add_accept(0);
+ 	proc_loop(server_proc, server_loop);
+diff -ruN -x .git tmux-orig/tmux-protocol.h fuzz-tmux/tmux-protocol.h
+--- tmux-orig/tmux-protocol.h	2026-04-30 15:51:25.733117000 -0700
++++ fuzz-tmux/tmux-protocol.h	2026-04-30 15:52:59.539796000 -0700
+@@ -67,7 +67,10 @@
+ 	MSG_WRITE,
+ 	MSG_WRITE_READY,
+ 	MSG_WRITE_CLOSE,
+-	MSG_READ_CANCEL
++	MSG_READ_CANCEL,
++
++	/* Fuzzing harness end-of-input marker. */
++	MSG_EOM = 999
+ };
+ 
+ /*
+diff -ruN -x .git tmux-orig/tmux.h fuzz-tmux/tmux.h
+--- tmux-orig/tmux.h	2026-04-30 15:52:25.762298000 -0700
++++ fuzz-tmux/tmux.h	2026-04-30 15:52:51.258208000 -0700
+@@ -2259,7 +2259,7 @@
+ void	proc_kill_peer(struct tmuxpeer *);
+ void	proc_flush_peer(struct tmuxpeer *);
+ void	proc_toggle_log(struct tmuxproc *);
+-pid_t	proc_fork_and_daemon(int *);
++pid_t	proc_fork_and_daemon(int *, int *);
+ uid_t	proc_get_peer_uid(struct tmuxpeer *);
+ 
+ /* cfg.c */

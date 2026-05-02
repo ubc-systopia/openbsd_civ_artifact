@@ -5,7 +5,7 @@
  set -e
  
 -openbsd_branch=master
-+openbsd_branch=555dc786beb36a80519104e4dc12788dba34b731
++openbsd_branch=ff933db9f
  if [ -n "$1" ]; then
  	openbsd_branch="$1"
  fi

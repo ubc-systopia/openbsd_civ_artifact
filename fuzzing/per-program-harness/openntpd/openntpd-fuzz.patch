@@ -1,0 +1,257 @@
+diff -urN a/OPENBSD_BRANCH b/OPENBSD_BRANCH
+--- a/OPENBSD_BRANCH	2026-05-01 21:00:37.866711000 -0700
++++ b/OPENBSD_BRANCH	2026-05-01 21:00:37.913911000 -0700
+@@ -1 +1 @@
+-master
++d1483dfbd9330150db84b7d9b863a9e7bfd46f5a
+diff -urN a/patches/0023-add-fuzz-harness.patch b/patches/0023-add-fuzz-harness.patch
+--- a/patches/0023-add-fuzz-harness.patch	1969-12-31 16:00:00.000000000 -0800
++++ b/patches/0023-add-fuzz-harness.patch	2026-05-01 21:02:18.804996000 -0700
+@@ -0,0 +1,211 @@
++diff -urN a/src/usr.sbin/ntpd/constraint.c b/src/usr.sbin/ntpd/constraint.c
++--- a/src/usr.sbin/ntpd/constraint.c	2026-05-01 21:02:14.152725000 -0700
+++++ b/src/usr.sbin/ntpd/constraint.c	2026-05-01 21:02:14.154283000 -0700
++@@ -79,6 +79,7 @@
++ extern u_int peer_cnt;
++ extern struct imsgbuf *ibuf;		/* priv */
++ extern struct imsgbuf *ibuf_main;	/* chld */
+++extern int eom_received_count;
++ 
++ struct httpsdate {
++ 	char			*tls_addr;
++@@ -615,8 +616,9 @@
++ 	ssize_t			 n;
++ 	struct timeval		 tv[2];
++ 
++-	if ((cstr = constraint_byfd(pfd->fd)) == NULL)
+++	if ((cstr = constraint_byfd(pfd->fd)) == NULL) {
++ 		return (0);
+++	}
++ 
++ 	if (!(pfd->revents & POLLIN))
++ 		return (0);
++@@ -648,6 +650,17 @@
++ 			/* forward imsg to ntp child, don't parse it here */
++ 			imsg_compose(ibuf, imsg.hdr.type,
++ 			    cstr->id, 0, -1, imsg.data, sizeof(tv));
+++			break;
+++		case IMSG_EOM:
+++			/*
+++			 * Harness: when both compartments (the ntp child via
+++			 * pipe_chld and the synthesised constraint endpoint
+++			 * via fuzz_constraint_pipe) have echoed the EOM back,
+++			 * exit(0) so afl-fuzz can terminate each test case
+++			 * cleanly.
+++			 */
+++			if (++eom_received_count >= 2)
+++				exit(0);
++ 			break;
++ 		default:
++ 			break;
++diff -urN a/src/usr.sbin/ntpd/ntpd.c b/src/usr.sbin/ntpd/ntpd.c
++--- a/src/usr.sbin/ntpd/ntpd.c	2026-05-01 21:02:14.149332000 -0700
+++++ b/src/usr.sbin/ntpd/ntpd.c	2026-05-01 21:02:14.151154000 -0700
++@@ -41,6 +41,7 @@
++ #include <err.h>
++ 
++ #include "ntpd.h"
+++#include <msg_generator.h>
++ 
++ void		sighdlr(int);
++ __dead void	usage(void);
++@@ -69,6 +70,7 @@
++ int			 timeout = INFTIM;
++ 
++ extern u_int		 constraint_cnt;
+++int			 eom_received_count = 0;
++ 
++ const char		*showopt;
++ 
++@@ -313,13 +315,11 @@
++ 	signal(SIGINT, sighdlr);
++ 	signal(SIGHUP, sighdlr);
++ 
++-	constraint_purge();
++-
++ 	if ((ibuf = malloc(sizeof(struct imsgbuf))) == NULL)
++ 		fatal(NULL);
++ 	imsg_init(ibuf, pipe_chld[0]);
++ 
++-	constraint_cnt = 0;
+++	constraint_cnt = 1;
++ 
++ 	/*
++ 	 * Constraint processes are forked with certificates in memory,
++@@ -330,6 +330,64 @@
++ 	if (pledge("stdio settime proc exec", NULL) == -1)
++ 		err(1, "pledge");
++ 
+++	/*
+++	 * Fuzzing harness: drive both compartments (the ntp child and a
+++	 * synthetic constraint endpoint) from stdin via libmsg_generator.
+++	 * Two compartments (compartment 0 = ntp child via pipe_chld,
+++	 * compartment 1 = the synthesised constraint endpoint), 20 valid
+++	 * message types (IMSG_NONE..IMSG_PROBE_ROOT = 0..19) — IMSG_EOM
+++	 * (20) is reserved as the end-of-input marker.  msg_interface_init
+++	 * automatically sets the expected EOM count to num_compartments,
+++	 * so the receivers exit(0) once one EOM per compartment has been
+++	 * dispatched.
+++	 */
+++	struct imsgbuf other_side;
+++	struct imsgbuf other_constraint;
+++	int fuzz_constraint_pipe[2];
+++
+++	imsg_init(&other_side, pipe_chld[1]);
+++	if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, PF_UNSPEC,
+++	    fuzz_constraint_pipe) == -1)
+++		fatal("socketpair for fuzzing");
+++	imsg_init(&other_constraint, fuzz_constraint_pipe[1]);
+++
+++	{
+++		struct msg_interface iface;
+++		struct msg_data msg;
+++
+++		if (msg_interface_init(&iface, STDIN_FILENO, 2, IMSG_EOM)
+++		    != MSG_GEN_SUCCESS)
+++			fatalx("msg_interface_init failed");
+++
+++		msg_interface_set_endpoint(&iface, 0, &other_side);
+++		msg_interface_set_endpoint(&iface, 1, &other_constraint);
+++		msg_interface_set_eom_type(&iface, IMSG_EOM);
+++
+++		while (msg_generate(&iface, &msg) == MSG_GEN_SUCCESS) {
+++			struct imsgbuf *target =
+++			    (struct imsgbuf *)msg.endpoint;
+++			if (target == NULL)
+++				continue;
+++			imsg_compose(target, msg.type, 0, 0,
+++			    msg.has_fd ? msg.fd : -1,
+++			    msg.payload, msg.actual_payload_size);
+++		}
+++
+++		for (uint8_t i = 0; i < iface.num_compartments; i++) {
+++			struct msg_data eom_msg;
+++			if (msg_generate_eom(&iface, i, &eom_msg) ==
+++			    MSG_GEN_SUCCESS) {
+++				struct imsgbuf *target =
+++				    (struct imsgbuf *)eom_msg.endpoint;
+++				imsg_compose(target, eom_msg.type, 0, 0, -1,
+++				    NULL, 0);
+++			}
+++		}
+++
+++		imsg_flush(&other_side);
+++		imsg_flush(&other_constraint);
+++	}
+++
++ 	while (quit == 0) {
++ 		new_cnt = PFD_MAX + constraint_cnt;
++ 		if (new_cnt > pfd_elms) {
++@@ -352,11 +410,14 @@
++ 
++ 		i = PFD_MAX;
++ 		TAILQ_FOREACH(cstr, &conf->constraints, entry) {
+++			cstr->fd = fuzz_constraint_pipe[0];
+++			imsg_init(&cstr->ibuf, fuzz_constraint_pipe[0]);
++ 			pfd[i].fd = cstr->fd;
++ 			pfd[i].events = POLLIN;
++ 			i++;
++ 		}
++ 
+++
++ 		if ((nfds = poll(pfd, i, timeout)) == -1)
++ 			if (errno != EINTR) {
++ 				log_warn("poll error");
++@@ -490,6 +551,15 @@
++ 			break;
++ 		case IMSG_CONSTRAINT_KILL:
++ 			priv_constraint_kill(imsg.hdr.peerid);
+++			break;
+++		case IMSG_EOM:
+++			/*
+++			 * Harness: count EOMs from the two compartments and
+++			 * exit(0) when both have arrived so afl-fuzz can
+++			 * terminate each test case cleanly.
+++			 */
+++			if (++eom_received_count >= 2)
+++				exit(0);
++ 			break;
++ 		default:
++ 			break;
++diff -urN a/src/usr.sbin/ntpd/ntpd.h b/src/usr.sbin/ntpd/ntpd.h
++--- a/src/usr.sbin/ntpd/ntpd.h	2026-05-01 21:02:14.157800000 -0700
+++++ b/src/usr.sbin/ntpd/ntpd.h	2026-05-01 21:02:14.158559000 -0700
++@@ -330,7 +330,8 @@
++ 	IMSG_CTL_SHOW_ALL_END,
++ 	IMSG_SYNCED,
++ 	IMSG_UNSYNCED,
++-	IMSG_PROBE_ROOT
+++	IMSG_PROBE_ROOT,
+++	IMSG_EOM
++ };
++ 
++ enum ctl_actions {
++diff -urN a/src/usr.sbin/ntpd/util.c b/src/usr.sbin/ntpd/util.c
++--- a/src/usr.sbin/ntpd/util.c	2026-05-01 21:02:14.156054000 -0700
+++++ b/src/usr.sbin/ntpd/util.c	2026-05-01 21:02:14.157102000 -0700
++@@ -165,6 +165,7 @@
++ pid_t
++ start_child(char *pname, int cfd, int argc, char **argv)
++ {
+++#if 0
++ 	char		**nargv;
++ 	int		  nargc, i;
++ 	pid_t		  pid;
++@@ -198,6 +199,7 @@
++ 		} else if (fcntl(cfd, F_SETFD, 0) == -1)
++ 			fatal("fcntl");
++ 
+++		printf("before execvp, %s\n", argv[0]);
++ 		execvp(argv[0], nargv);
++ 		fatal("%s: execvp", __func__);
++ 		break;
++@@ -210,6 +212,8 @@
++ 
++ 	free(nargv);
++ 	return (pid);
+++#endif
+++	return 1234;
++ }
++ 
++ int
+diff -urN a/src/Makefile.am b/src/Makefile.am
+--- a/src/Makefile.am	2026-05-01 21:00:37.881555000 -0700
++++ b/src/Makefile.am	2026-05-01 21:00:37.916056000 -0700
+@@ -16,6 +16,7 @@
+ # OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ 
+ AM_CPPFLAGS = -I$(top_srcdir)/include
++AM_CPPFLAGS += -I$(BUFFER_CHECKER_ROOT)
+ AM_CPPFLAGS += -DYYSTYPE_IS_DECLARED
+ 
+ ACLOCAL_AMFLAGS = -Im4
+@@ -30,9 +31,12 @@
+ 
+ ntpd_LDADD = $(PLATFORM_LDADD) $(PROG_LDADD) -lm
+ ntpd_LDADD += $(top_builddir)/compat/libcompat.la
++ntpd_LDADD += $(BUFFER_CHECKER_ROOT)/libmsg_generator.a
+ if !HAVE_EXPLICIT_BZERO
+ ntpd_LDADD += $(top_builddir)/compat/libcompatnoopt.la
+ endif
++
++ntpd_CFLAGS += -fsanitize-recover=memory
+ 
+ ntpd_SOURCES = client.c
+ ntpd_SOURCES += config.c
+diff -urN a/update.sh b/update.sh
+--- a/update.sh	2026-05-01 21:00:37.881705000 -0700
++++ b/update.sh	2026-05-01 21:00:37.914689000 -0700
+@@ -16,7 +16,7 @@
+ (cd openbsd
+  git fetch
+  git checkout "${openbsd_branch}"
+- git pull --rebase)
++)
+ 
+ # setup source paths
+ dir=`pwd`

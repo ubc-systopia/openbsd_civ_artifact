@@ -1,51 +1,65 @@
-## Getting `dhcpd`
+# dhcpd fuzzing harness
 
-Clone the repository, enter the source tree, and check out the revision used for this artifact:
+## 1. Build the `ptr_checker` helper
+
+Place the `ptr_checker` directory next to this README, then build it. Only `libmsg_generator.a` is consumed by the harness.
+
+```sh
+cd ptr_checker
+make ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=0
+export BUFFER_CHECKER_ROOT=$PWD
+cd ..
+```
+
+`BUFFER_CHECKER_ROOT` is read by the patched `src/usr.sbin/dhcpd/Makefile` to locate `msg_generator.h` and `libmsg_generator.a`.
+
+## 2. Install build dependencies (FreeBSD)
+
+```sh
+pkg install git
+kldload pf                              # /dev/pf must exist for pftable_handler
+echo 'subnet 192.168.122.0 netmask 255.255.255.0 {
+  range 192.168.122.100 192.168.122.200;
+  option domain-name "home.example";
+  option domain-name-servers 8.8.8.8, 8.8.4.4;
+  option routers 192.168.122.1;
+}' > /etc/dhcpd.conf
+```
+
+`pftable_handler` opens `/dev/pf` at startup; without `kldload pf` the binary exits before the harness loop runs.
+
+## 3. Clone upstream and apply the harness patch
 
 ```sh
 git clone https://github.com/koue/dhcpd.git
 cd dhcpd
 git checkout 43fc6d3cb6cac3c8bac8bf6f24dcbb764ced614b
+patch -p1 < PATH/TO/fuzz-dhcpd.patch
 ```
 
-Set up the `ptr_checker` library:
+## 4. Sanity-check the harness wiring
 
 ```sh
-cp -r /path/to/ptr_checker ./ptr_checker
-cd ptr_checker
-
-make ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=0
-export BUFFER_CHECKER_ROOT=$PWD
-export AFL_PRELOAD="${BUFFER_CHECKER_ROOT}/libbuffer_check.so"
-cd ..
-```
-
-Create `/etc/dhcpd.conf`, add the following content:
-
-```txt
-subnet 192.168.122.0 netmask 255.255.255.0 {
-  range 192.168.122.100 192.168.122.200;
-  option domain-name "home.ridgway.io";
-  option domain-name-servers 8.8.8.8, 8.8.4.4;
-  option routers 192.168.122.1;
-}
-```
-
-Apply the fuzzing harness patch, compile with `asan` and `ubsan`, and start fuzzing:
-
-```sh
-patch -p2 < PATH/TO/fuzz-dhcpd.patch
 cd src/usr.sbin/dhcpd
-AFL_USE_ASAN=1 AFL_USE_UBSAN=1 make CC=afl-clang-lto
+export AFL_PATH=/path/to/AFLplusplus    # source dir, not install dir
+AFL_USE_ASAN=1 AFL_USE_UBSAN=1 BUFFER_CHECKER_ROOT=$BUFFER_CHECKER_ROOT \
+    make CC=afl-clang-lto
 
-mkdir seeds
-dd if=/dev/urandom of=seeds/random_seed bs=1 count=16
-
-mkdir out
-
-afl-fuzz -i seeds -o out -- ./dhcpd -d
+printf '' | ./dhcpd -d
+echo $?
 ```
 
-The `.patch` file is located in the directory of this README.
+Expected: `1 number of eoms received!, 1 expected` followed by `EXIT=0`.
 
-Note: The privileged compartment is input-only and does not send messages. Because of that, there is no need to fuzz with MSan or `ptr_checker`, since they only check outgoing messages from the privileged compartment.
+## 5. Fuzz
+
+```sh
+mkdir -p seeds out
+dd if=/dev/urandom of=seeds/seed bs=512 count=8
+
+afl-fuzz -i seeds -o out -m none -- ./dhcpd -d
+```
+
+## Note
+
+`libbuffer_check.so` is not used here: upstream `dhcpd` privsep uses plain `fork(2)` (no `exec`), so parent and child share an ASLR layout and pointer-shaped IPC values are valid on the receiving side. Fuzz with ASan + UBSan only.

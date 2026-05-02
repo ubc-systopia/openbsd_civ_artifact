@@ -1,0 +1,2485 @@
+2024-03-23 22:51  yasuoka
+
+	* lib/libevent/kqueue.c: In kq_del(), delete matching EV_ADD
+	  entries to prevent libevent from passing both EV_ADD and
+	  EV_DELETE for the same fd to kevent().
+
+	  ok visa
+
+2023-11-20 12:15  florian
+
+	* lib/libc/asr/asr_private.h: localhost is either 127.0.0.1 or ::1,
+	  nothing else.
+
+	  RFC 6761, 6.3 Domain Name Reservation Considerations for
+	  "localhost.":    3.  Name resolution APIs and libraries SHOULD
+	  recognize localhost	     names as special and SHOULD always
+	  return the IP loopback address	for address queries and
+	  negative responses for all other query	types.	Name
+	  resolution APIs SHOULD NOT send queries for	     localhost
+	  names to their configured caching DNS server(s).
+
+	  This makes sure that the getaddrinfo(3) and gethostbyname(3)
+	  family of functions always return the loopback address and do not
+	  send queries to name servers. This includes "localhost",
+	  "localhost." and everything under ".localhost" and ".localhost.".
+
+	  For example, a host underneath the .com.ar zone will per default
+	  have a search list of "com.ar.". resolv.conf(5) has a default of
+	  "lookup bind file". Both combined will result in lookups for
+	  "localhost" to not return 127.0.0.1 because localhost.com.ar is
+	  registered in DNS.
+
+	  It has been known for decades that this is a problem, especially
+	  for localhost.
+
+	  Problem recently spotted by gonzalo@ and debugged by sthen@
+
+	  Testing sthen, gonzalo Input & OK phessler, eric, millert OK
+	  sthen, kn, deraadt
+
+2023-09-24 08:28  tb
+
+	* share/mk/bsd.regress.mk: Make REGRESS_LOG more useful again
+
+	  Enabling REGRESS_FAIL_EARLY made REGRESS_LOG error out at the
+	  first error, which is pointless. So default to no if REGRESS_LOG
+	  is set unless the user explicitly enabled it.
+
+	  Requested by claudio ok bluhm
+
+2023-09-15 07:13  tb
+
+	* share/mk/bsd.regress.mk: Default REGRESS_FAIL_EARLY to yes
+
+	  The current fail open behavior may be desirable in some
+	  circumstances, but it is an unexpected and dangerous default
+	  since one expects some kind of feedback when running a test
+	  suite. Currently failing tests are only visible on inspecting the
+	  log, which led to unsuspecting people missing failures several
+	  times in the past. Flip the default to fail closed. For those
+	  that want to have the old behavior, it is easy enough to set the
+	  variable to no.
+
+	  Positive feedback job and schwarze ok kn
+
+2023-05-01 07:04  jsg
+
+	* lib/libevent/event_set_log_callback.3: spelling
+
+2023-04-29 15:38  schwarze
+
+	* lib/libevent/event_set_log_callback.3: New manual page written by
+	  Ted Bullock, dropping the empty RETURN VALUES section and adding
+	  the missing "#include <stdilib.h>" below EXAMPLES.
+
+2023-04-29 13:37  schwarze
+
+	* lib/libevent/event_set.3: Provide function prototypes for macros
+	  that take arguments, rename the "ev" argument to "event" to make
+	  some text read better, and get rid of colons at the ends of list
+	  tags.
+
+	  OK jmc@ and Ted Bullock.
+
+2023-04-28 17:31  schwarze
+
+	* lib/libevent/event_base_new.3: Some wording tweaks to finish the
+	  polishing.  While here, also correct the HISTORY section.  OK
+	  jmc@
+
+2023-04-27 16:48  schwarze
+
+	* lib/libevent/event_set.3: tiny wording tweak from Ted Bullock to
+	  make misunderstandings less likely; OK jmc@
+
+2023-04-27 16:10  schwarze
+
+	* lib/libevent/event_base_loop.3: various markup tweaks, no content
+	  change; OK jmc@
+
+2023-04-27 15:44  schwarze
+
+	* lib/libevent/event_set.3: various minor content corrections and
+	  improvements; feedback and OK jmc@ and Ted Bullock
+
+2023-04-26 18:56  schwarze
+
+	* lib/libevent/event_set.3: New manual page written by Ted Bullock
+	  <tbullock at comlore dot com>, to start working on it in the
+	  tree.
+
+2023-04-25 17:57  schwarze
+
+	* lib/libevent/event_base_new.3: Put ERRORS and DIAGNOSTICS
+	  information in the sections where they belong.  More details on
+	  RETURN VALUES and ERRORS.  Document all DIAGNOSTICS messages
+	  except the various malloc(3)-related ones and except those that
+	  cannot actually occur but would merely report violations of
+	  internal invariants.	Shorten some wordings in this section.
+
+	  Using feedback from jmc@ and Ted Bullock.  OK jmc@ and nicm@ on
+	  an earlier version.
+
+2023-04-17 04:46  jsg
+
+	* lib/libevent/event_base_loop.3: fix double word
+
+2023-04-10 13:40  schwarze
+
+	* lib/libevent/event_base_loop.3: Various wording tweaks for
+	  clarity and precision, and a few for conciseness.  OK jmc@ and
+	  Ted Bullock
+
+2023-04-10 13:32  schwarze
+
+	* lib/libevent/event_base_new.3: More deduplication: talk about
+	  environment variable in one place, not two.  Clarify that the
+	  variables only affect the event_base structure currently being
+	  created.  They do not disable "library support" as a whole.  Sort
+	  the variables alphabetically.
+
+	  OK jmc@ and Ted Bullock
+
+2023-04-09 14:43  schwarze
+
+	* lib/libevent/event_base_loop.3: Trim some redundant and a bit of
+	  misleading text: 1. The values of #define'd constants are part of
+	  the ABI, but not of the API.	Programmers need not worry about
+	  them and must not rely on them.  Consequently, do not list these
+	  values in the SYNOPSIS.  2. libevent can be used for any event
+	  loop, not only for the main loop of a program.  3. No need to
+	  state numbers of arguments, they are obvious from the SYNOPSIS.
+	  4. If a function is documented to require a pointer to a specific
+	  kind of object as an argument, there is no need to say passing
+	  NULL is undefined.  OK jmc@ and Ted Bullock
+
+2023-04-09 14:30  schwarze
+
+	* lib/libevent/event_base_new.3: Explain what it means that an API
+	  function "requires event_init(3)" in one place, not in two
+	  places, reducing duplication of text.
+
+	  Joint work with Ted Bullock.	OK jmc@.
+
+2023-04-08 16:21  schwarze
+
+	* lib/libevent/event_base_loop.3: New manual page written by Ted
+	  Bullock <tbullock at comlore dot com>, providing more information
+	  and in a more systematic way than the current event(3) manual
+	  page.  Not yet linked to the tree.
+
+	  Using input from nicm@ and jmc@.
+
+2023-04-06 20:52  schwarze
+
+	* lib/libevent/event_base_new.3: Fix two documentation bugs: 1. The
+	  function event_base_free(3) does reset the global variable to the
+	  initial state when needed.  2. The CAVEATS section got the issue
+	  backwards: multiple threads per base cause trouble, whereas
+	  multiples bases per thread do not.
+
+	  While here, also avoid the plural when talking about the global
+	  variable used by event_init(3): there is only one.
+
+	  Using input from jmc@ and from Ted Bullock.
+
+2023-04-05 18:34  schwarze
+
+	* lib/libevent/event_base_new.3: Import the first of the new
+	  libevent manual pages written by Ted Bullock <tbullock at comlore
+	  dot com> in order to polish it in the tree.  Not yet linked to
+	  the build.
+
+	  In particular, this documents the so far undocumented functions
+	  event_base_new(3) and event_reinit(3) and provides lots of new
+	  information regarding event_init(3) and event_base_free(3).
+
+	  Also using input from nicm@, jmc@, and myself, OK nicm@ jmc@.
+
+2022-12-27 23:05  jmc
+
+	* lib/libevent/: buffer.c, event.c, kqueue.c: spelling fixes; from
+	  paul tagliamonte ok nicm
+
+2022-12-09 09:30  tb
+
+	* share/mk/bsd.regress.mk: Allow overriding default run-regress-*
+	  targets
+
+	  Overriding a default run-regress-* target with custom commands is
+	  already possible and done by many tests. The fact that it
+	  currently works depends on behavior in the BUGs section of
+	  make.1, however. The fix is not to add commands if the target is
+	  already defined with commands.
+
+	  tested by anton correct fix from espie, ok anton
+
+2022-11-17 17:39  florian
+
+	* lib/libc/asr/asr_private.h: Restrict what getaddrinfo(3) is
+	  willing to try to resolve.
+
+	  Programs assume that a successful call to getaddrinfo(3)
+	  validates the input as "safe", but that's not true. Characters
+	  like '$', '`', '\n' or '*' can traverse the DNS without problems,
+	  but have special meaning, for example a shell.
+
+	  There is a function res_hnok() already in libc, but it validates
+	  if a string is a host name, which is too strict in practice. For
+	  example foo-.example.com is not a valid host name, but is used on
+	  the Internet.
+
+	  Posix has this to say: "The getaddrinfo() function shall
+	  translate the name of a service location (for example, a host
+	  name)"
+
+	  It hints that the input should be a host name, but it does not
+	  restrict it to it.
+
+	  This introduces a function hnok_lenient() which restricts the
+	  input to getaddrinfo(3) to the set [A-z0-9-_.]. Additionally two
+	  consecutive dots ('.') are not allowed nor can the string start
+	  with - or '.'.
+
+	  glibc introduced a similar restriction years ago, so this should
+	  not cause problems.
+
+	  It has been known in the DNS community for years, probably
+	  decades that getaddrinfo(3) is too lenient what it accepts, but
+	  it has always been kicked down the road as "not a DNS problem".
+	  Unfortunately this information never made it out of the DNS
+	  community and no coordinated effort happened to have this
+	  addressed in operating systems.
+
+	  David Leadbeater recently demonstrated how ssh(1) and ftp(1) are
+	  too trusting with what getaddrinfo(3) accepts. Both have been
+	  fixed independently of this.
+
+	  Input deraadt, eric OK millert, deraadt
+
+2022-03-31 17:27  naddy
+
+	* lib/libevent/event.3: man pages: add missing commas between
+	  subordinate and main clauses
+
+	  jmc@ dislikes a comma before "then" in a conditional, so leave
+	  those untouched.
+
+	  ok jmc@
+
+2022-01-20 14:18  naddy
+
+	* lib/libc/asr/asr.c: remove unused variable from all copies of
+	  _asr_strdname()
+
+	  ... including those inlined into print_dname().  This also fixes
+	  -Wunused-but-set-variable warnings warnings in smtpd and smtpctl.
+	   The code was imported with asr and then copied around.
+
+	  ok deraadt@ guenther@
+
+2021-11-22 20:18  jca
+
+	* lib/libc/asr/asr.c: Implement rfc6840 (AD flag processing) if
+	  using trusted name servers
+
+	  libc can't do DNSSEC validation but it can ask a "security-aware"
+	  resolver to do so.  Let's send queries with the AD flag set when
+	  appropriate, and let applications look at the AD flag in
+	  responses in a safe way, ie clear the AD flag if the resolvers
+	  aren't trusted.  By default we only trust resolvers if
+	  resolv.conf(5) only lists name servers on localhost - the obvious
+	  candidates being unwind(8) and unbound(8).  For non-localhost
+	  resolvers, an admin who trusts *all the name servers* listed in
+	  resolv.conf(5) *and the network path leading to them* can
+	  annotate this with "options trust-ad".
+
+	  AD flag processing gives ssh -o VerifyHostkeyDNS=Yes a chance to
+	  fetch SSHFP records in a secure manner, and tightens the
+	  situation for other applications, eg those using RES_USE_DNSSEC
+	  for DANE.  It should be noted that postfix currently assumes
+	  trusted name servers by default and forces RES_TRUSTAD if
+	  available.
+
+	  RES_TRUSTAD and "options trust-ad" were first introduced in glibc
+	  by Florian Weimer.  Florian Obser (florian@) contributed various
+	  improvements, fixed a bug and added automatic trust for name
+	  servers on localhost.
+
+	  ok florian@ phessler@
+
+2021-11-05 13:08  kn
+
+	* lib/libc/asr/asr.c: Zap unused variables
+
+	  OK martijn
+
+2021-08-31 23:33  bluhm
+
+	* share/mk/bsd.regress.mk: Make include bsd.prog.mk is supporting
+	  PROGS for a while.  Allow multiple programs also in
+	  bsd.regress.mk for consistency.  OK anton@
+
+2021-03-18 11:16  claudio
+
+	* lib/libc/stdlib/recallocarray.c: Type-cast getpagesize() from int
+	  to size_t for the comparison with d.	getpagesize() will only
+	  return positive numbers (there is no negative page size system)
+	  and it can not fail.	Should fix some compiler warnings seen in
+	  -portable projects.  OK otto@
+
+2021-01-06 19:54  otto
+
+	* lib/libc/asr/asr.c: Fix two issues related to thread private data
+	  in asr.  - setting up asr in single thread mode and then starting
+	  threads using asr   would lead to multiple threads sharing the
+	  same resolver.  - destruction of a thread that has been using asr
+	  would leak data.  Problem originally reported by Alexey Sokolov
+	  and Uli Schlachter.  ok kettenis@
+
+2020-12-17 14:54  bluhm
+
+	* share/mk/bsd.regress.mk: Run setup_once targets in a sepearate
+	  block with headline before all other targets.  OK tb@
+
+2020-12-16 16:53  bluhm
+
+	* share/mk/bsd.regress.mk: When debugging tests, it is useful to
+	  see the target name and which output belongs to it.  Echo
+	  headline with regress target and empty line afterwards.  OK
+	  sthen@ tb@ OK claudio@
+
+2020-07-06 13:33  pirofti
+
+	* lib/libc/asr/asr.c: Add support for timeconting in userland.
+
+	  This diff exposes parts of clock_gettime(2) and gettimeofday(2)
+	  to userland via libc eliberating processes from the need for a
+	  context switch everytime they want to count the passage of time.
+
+	  If a timecounter clock can be exposed to userland than it needs
+	  to set its tc_user member to a non-zero value. Tested with one or
+	  multiple counters per architecture.
+
+	  The timing data is shared through a pointer found in the new ELF
+	  auxiliary vector AUX_openbsd_timekeep containing timehands
+	  information that is frequently updated by the kernel.
+
+	  Timing differences between the last kernel update and the current
+	  time are adjusted in userland by the tc_get_timecount() function
+	  inside the MD usertc.c file.
+
+	  This permits a much more responsive environment, quite visible in
+	  browsers, office programs and gaming (apparently one is are able
+	  to fly in Minecraft now).
+
+	  Tested by robert@, sthen@, naddy@, kmos@, phessler@, and many
+	  others!
+
+	  OK from at least kettenis@, cheloha@, naddy@, sthen@
+
+2020-06-07 16:16  deraadt
+
+	* lib/libc/asr/: asr.c: In the libc resolver function asr_run(),
+	  clear the result buffer everytime, because there are callers who
+	  were inspecting unrelated fields.  discussion with eric, otto,
+	  solution from semarie this is errata 6.6/031_asr and 6.7/009_asr
+
+2019-10-24 05:57  otto
+
+	* include/asr.h, lib/libc/asr/asr.c: Allow the caller of asr
+	  functions to create and use a specific context.  Diff from eric@
+	  and florian@, commiting on their behalf since they are absent and
+	  we want to ride the minor shlib bump.
+
+2019-06-28 13:32  deraadt
+
+	* lib/libevent/evutil.c: When system calls indicate an error they
+	  return -1, not some arbitrary value < 0.  errno is only updated
+	  in this case.  Change all (most?) callers of syscalls to follow
+	  this better, and let's see if this strictness helps us in the
+	  future.
+
+2019-06-17 17:20  espie
+
+	* share/mk/bsd.regress.mk: add REGRESS_EXPECTED_FAILURES variable,
+	  for those tests that are expected to fail because they're not yet
+	  implemented.
+
+	  okay bluhm@
+
+2019-06-15 07:30  espie
+
+	* share/mk/bsd.regress.mk: simplify cleanup handling okay bluhm@
+
+2019-06-11 18:14  espie
+
+	* share/mk/bsd.regress.mk: make things slightly less insane: -
+	  actually use the ERRORS framework for REGRESS_LOG - put it at end
+	  of file, as best working (years of practice on bsd.port.mk) -
+	  actually use .SILENT - fix REGRESS_IGNORE_FAIL. Don't put a - in
+	  front of lines, but just don't error out as false on FAILED
+	  tests.  This finally allows ^C to actually interrupt a testsuite.
+	   - add one missing .PHONY (quite a few more for later)
+
+	  okay bluhm@
+
+2019-05-14 16:43  bluhm
+
+	* share/mk/bsd.regress.mk: Remove the REGRESS_MAXTIME feature from
+	  regress framework.  The timeout based on CPU seconds is pretty
+	  useless, most hanging tests sleep and do not spin.  The timeout
+	  could not be distinguished from failure.  Only 3 tests used it.
+	  OK anton@ schwarze@ cheloha@ otto@
+
+2019-05-08 17:33  tobias
+
+	* lib/libevent/kqueue.c: Fixed integer overflow with an excessively
+	  large amount of events.
+
+	  While at it: KNF and switch from reallocarray to recallocarray.
+
+	  ok tedu
+
+2019-05-03 16:31  tobias
+
+	* lib/libevent/buffer.c: Fixed endless loop/ OOB write on 64 bit
+	  systems with large buffers.
+
+	  If a buffer exceeds UINT_MAX (which is only possible on 64 bit
+	  systems) an endless loop or OOB write can occur in
+	  buffer-specific readline functions.
+
+	  Switching variables in function scope to size_t solves these
+	  issue because relevant fields in struct buffer are already
+	  size_t.
+
+	  ok cheloha, deraadt, nicm, tedu
+
+2019-05-01 19:14  jca
+
+	* lib/libevent/event.c: Tweaks previous: gettime() can be void, use
+	  TIMESPEC_TO_TIMEVAL
+
+	  ok nicm@ tobias@ cheloha@
+
+2019-05-01 19:12  jca
+
+	* lib/libevent/event.c: Require clock_gettime(CLOCK_MONOTONIC) and
+	  remove fallback code
+
+	  If clock_gettime(CLOCK_MONOTONIC) fails here, something is really
+	  wrong.  Lots of userland already require it anyway.  Removing the
+	  fallback code means less code, less global state and less
+	  fiddling with the timeheap internals.
+
+	  ok nicm@ tedu@ tobias@ cheloha@
+
+2019-04-29 17:11  tobias
+
+	* lib/libevent/: event.c, event.h, min_heap.h: Switched min_heap to
+	  size_t to prevent integer overflows.
+
+	  Also, as deraadt suggested, switched realloc to recallocarray to
+	  at least prevent uninitialized memory to be used as pointers in
+	  case of other programming errors. A proper solution (not using an
+	  array) needs more work.
+
+	  This change occured in sync with upstream libevent 2.2.
+
+	  with input by and ok bluhm, jca, tedu
+
+2019-04-20 23:22  tedu
+
+	* lib/libevent/min_heap.h: knf, ok bluhm
+
+2019-04-18 23:44  tedu
+
+	* lib/libevent/min_heap.h: unfold some compound operations to make
+	  this easier to follow
+
+2018-12-03 22:30  bluhm
+
+	* share/mk/bsd.regress.mk: If a regress uses REGRESS_SKIP_TARGETS
+	  to skip part of its tests, print SKIPPED.  This helps to detect
+	  such incomplete tests.  OK anton@
+
+2018-10-22 17:31  krw
+
+	* lib/libc/asr/asr.c: More "explicitely" -> "explicitly" in various
+	  comments.
+
+	  ok guenther@ tb@ deraadt@
+
+2018-10-05 11:15  bluhm
+
+	* share/mk/bsd.regress.mk: Add regress variable to run setup once
+	  for all tests.  OK anton@ benno@
+
+2018-09-26 09:34  bluhm
+
+	* share/mk/bsd.regress.mk: Add variables for setup and cleanup of
+	  regression tests.  OK anton@ jca@ tb@ benno@
+
+2018-09-23 08:56  anton
+
+	* lib/libevent/event.3: Document bufferevent_setwatermark().
+	  Initial diff from Geoff Hill on tech@ with some tweaks.
+
+	  With feedback and ok jmc@
+
+2018-07-26 12:50  rob
+
+	* lib/libevent/: evbuffer_new.3, event.3: Mention some missing
+	  libevent macros.
+
+	  ok jmc@, benno@, "yes" deraadt@
+
+2018-04-28 15:16  schwarze
+
+	* lib/libc/asr/: asr.c, asr_private.h: To allow us to get rid of
+	  /etc/networks, make getnetby*(3) wrappers around
+	  gethostby*_async(3).	If you had anything of importance in
+	  /etc/networks, specify it in /etc/hosts instead.  Feedback and OK
+	  eric@, OK deraadt@
+
+2018-03-13 12:25  jca
+
+	* lib/libc/asr/asr.c: Fix comments
+
+	  ok eric@ a while ago
+
+2018-02-06 13:00  eric
+
+	* lib/libc/asr/asr.c: make sure that all error paths are correctly
+	  handled in asr_run_sync() and that the result is always properly
+	  set when the functions returns.  fix issues spotted by claudio@.
+
+	  ok claudio@
+
+2018-01-15 20:38  bluhm
+
+	* share/mk/bsd.regress.mk: We have no deprecated regress variables
+	  in our tree.	Remove the compatibility layer.
+
+2017-08-01 14:57  schwarze
+
+	* lib/libevent/evbuffer_new.3: add missing and correct misspelled
+	  names, most in NAME sections; found with
+	  regress/usr.bin/mandoc/db/dbm_dump; OK jmc@
+
+2017-07-10 21:37  tedu
+
+	* lib/libevent/kqueue.c: if there are no changes for kevent, pass
+	  in NULL instead.  this has no effect except to make ktrace output
+	  prettier.  ok bluhm mpi
+
+2017-06-29 01:25  dlg
+
+	* lib/libevent/event.3: take const off the timeval argument in the
+	  pending functions.
+
+	  event_pending, evtimer_pending, and signal_pending all write to
+	  the timeval because that's how they tell the caller when the
+	  event is meant to fire.
+
+	  ok deraadt@ millert@ jmc@ schwarze@
+
+2017-03-18 01:48  deraadt
+
+	* lib/libevent/buffer.c: Use recallocarray() to avoid leaving
+	  detritus in memory when resizing the string buffer.  ok jsing
+	  millert
+
+2017-03-06 18:44  otto
+
+	* lib/libc/stdlib/recallocarray.c: Introducing recallocarray(3), a
+	  blend of calloc(3) and reallocarray(3) with the added feature
+	  that released memory is cleared. Much input from various
+	  developers. ok deraadt@ tom@
+
+2017-02-27 11:38  jca
+
+	* lib/libc/asr/asr_private.h: Add support for RES_USE_DNSSEC
+
+	  RES_USE_DNSSEC is implemented by setting the DNSSEC DO bit in
+	  outgoing queries.  The resolver is then supposed to set the AD
+	  bit in the reply if it managed to validate the answer through
+	  DNSSEC.  Useful when the application doesn't implement validation
+	  internally.  This scheme assumes that the validating resolver is
+	  trusted and that the communication channel between the validating
+	  resolver and and the client is secure.
+
+	  ok eric@ gilles@
+
+2017-02-27 11:31  jca
+
+	* lib/libc/asr/asr_private.h: Recognize and allow bits AD and CD in
+	  DNS replies.
+
+	  Needed for RES_USE_DNSSEC support.
+
+	  ok eric@ gilles@
+
+2017-02-27 10:44  jca
+
+	* lib/libc/asr/: asr.c, asr_private.h: Put a common flags field in
+	  the query struct, rather than in some elements of the union.
+
+	  This field is for internal asr flags.  The flags in "struct
+	  rrset" and "struct ni" are different kinds of flags.
+
+	  ok eric@
+
+2017-02-23 17:04  eric
+
+	* lib/libc/asr/: asr.c, asr_private.h: Put a common subq pointer in
+	  the query struct, rather than one in each element of the union.
+
+	  ok gilles@ millert@ krw@
+
+2017-02-18 19:23  jca
+
+	* lib/libc/asr/: asr.c, asr_private.h: Add EDNS0 support.
+
+	  EDNS allows for various DNS extensions, among which UDP DNS
+	  packets size bigger than 512 bytes.  The default is still to not
+	  advertize anything.
+
+	  ok eric@
+
+2017-02-17 22:24  eric
+
+	* lib/libc/asr/asr_private.h: use common errnos instead of random
+	  strings as error indicators in pack/unpack contexts.
+
+	  ok krw@ deraadt@
+
+2016-12-18 01:34  krw
+
+	* lib/libc/asr/asr_private.h: Remove prototype for static function
+	  _asr_resolver. Eliminates gcc whining about undefined static in
+	  all the .c files that include asr_private.h. _asr_resolver() is
+	  defined and used in asr.c only.
+
+	  ok kettenis@
+
+2016-09-03 11:31  nayden
+
+	* lib/libevent/: buffer.c, kqueue.c, poll.c, select.c: Remove NULL
+	  pointer checks before calls to free().  OK bluhm@ nicm@
+
+2016-08-20 19:08  jca
+
+	* lib/libc/asr/asr_private.h: Declare all _asr_* debug functions as
+	  hidden.
+
+	  Reported by & similar diff by guenther@ some time ago, ok eric@
+
+2016-07-17 11:21  stefan
+
+	* lib/libevent/event.3: Talk about event API instead of libevent
+
+	  Avoids inconsistent capitalization of libevent at start of
+	  sentence suggested by and ok jmc@, ok bluhm@
+
+2016-06-18 15:25  reyk
+
+	* lib/libc/asr/asr.c: Remove duplicated line.
+
+	  OK eric@
+
+2016-05-27 11:25  sthen
+
+	* lib/libc/asr/asr.c: typo fixes; Anthony Coulter
+
+2016-05-26 06:59  jmatthew
+
+	* lib/libc/asr/asr.c: Calculate elapsed time in poll() and subtract
+	  that from the remaining time when restarting poll() after
+	  receiving a signal.
+
+	  The ruby runtime send signals to threads periodically, so without
+	  accounting for elapsed time, the timeout would never expire if we
+	  didn't get a response from a nameserver.
+
+	  ok deraadt@ eric@
+
+2016-03-30 06:38  jmc
+
+	* lib/libevent/Makefile: for some time now mandoc has not required
+	  MLINKS to function correctly - logically complete that now by
+	  removing MLINKS from base;
+
+	  authors need only to ensure there is an entry in NAME for any
+	  function/ util being added. MLINKS will still work, and remain
+	  for perl to ease upgrades;
+
+	  ok nicm (curses) bcook (ssl) ok schwarze, who provided a lot of
+	  feedback and assistance ok tb natano jung
+
+2016-03-20 00:01  krw
+
+	* lib/libevent/evutil.c: Currently we have about a 50/50 split over
+	  fcntl(n, F_GETFL [,0]) idioms.
+
+	  Adopt the more concise fcntl(n, F_GETFL) over fcntl(n, F_GETFL,
+	  0) where it is obvious further investigation will not yield and
+	  even better way.
+
+	  Obviousness evaluation and ok guenther@
+
+2016-02-24 20:52  eric
+
+	* lib/libc/asr/asr.c: Avoid a possible double-free if the "search"
+	  keyword is used multiple times.
+
+	  ok jca@ gilles@
+
+2015-12-25 17:10  tedu
+
+	* lib/libevent/kqueue.c: revert change to call kevent immediately.
+	  tcpbench (at a minimum) relies on the old behavior of changes all
+	  happening after all event handlers run. in particular, it resets
+	  the event for the listening socket *before* calling accept(),
+	  when it is still readable.  kevent then (correctly) says it is
+	  readable on the next go through the loop.  silly, subtle, and
+	  stupid.  problem reported by kettenis
+
+2015-12-16 20:12  tedu
+
+	* lib/libevent/kqueue.c: change the kqueue backend to call kevent()
+	  as events are added instead of deferring until the dispatch loop.
+	  kqueue support for various types of files and filesystems has
+	  been historically incomplete, and kevent handles this condition
+	  by returning an error. the libevent dispatch loop has no way to
+	  recover from this error and fails catastrophically, bringing down
+	  the entire process because one file went bad.  now, instead of
+	  all that happending, event_add will return an error. the
+	  application can choose to handle or ignore this error, but at
+	  least the band will play on.	ok nicm
+
+2015-12-16 16:32  deraadt
+
+	* lib/libc/asr/: asr.c, asr_private.h: Remove support for
+	  HOSTALIASES from the resolver.  This "open and parse any file
+	  indicated by an environment variable" feature inside the resolver
+	  is incompatible with what pledge "dns" is trying to be.  It is a
+	  misguided "feature" added way back in history which almost noone
+	  uses, but everyone has to assume the risk from.  ok eric florian
+	  kettenis
+
+2015-12-11 18:49  nicm
+
+	* lib/libevent/log.c: Libraries should not print to stderr, ok tedu
+	  beck deraadt
+
+2015-11-23 18:04  deraadt
+
+	* lib/libc/asr/: asr.c, asr_private.h: Remove support for "lookup
+	  yp" in /etc/resolv.conf.  This historical wart is incompatible
+	  with pledge, because suddenly a "dns" operation needs "getpw"
+	  access to ypbind/ypserv, etc.  file + dns access is enough for
+	  everyone, sorry if you were using that old SunOS 4.x style
+	  mechanism, but it is now gone.  ok semarie millert florian
+
+2015-11-10 23:48  jmc
+
+	* lib/libevent/event.3: update NAME section to include all
+	  documented functions, or otherwise change Dt to reflect the name
+	  of an existing function;
+
+	  feedback/ok schwarze
+
+2015-10-28 21:38  eric
+
+	* lib/libc/asr/: asr.c, asr_private.h: We are always using
+	  _PATH_RESCONF, so no need to remember the path on the resolver.
+
+	  ok millert@ deraadt@
+
+2015-10-28 11:52  deraadt
+
+	* lib/libc/asr/asr.c: Remove support for [addr]:port syntax from
+	  the "nameserver" line.  This extension never made it to other
+	  systems.  (pledge is also happy with this.  The idea of DNS @ any
+	  port collides with pledge encouraring differentiation between DNS
+	  and non-DNS sockets) ok phessler jung sthen kettenis
+
+2015-10-07 13:59  deraadt
+
+	* lib/libc/asr/: asr.c, asr_private.h: getaddrinfo_async()
+	  shouldn't unconditionally intialize the resolver via
+	  _asr_use_resolver().	If the hint specifies for AI_NUMERICHOST,
+	  create a transient lookup context which won't try to open
+	  /etc/reslov.conf ok eric guenther
+
+2015-10-03 22:35  deraadt
+
+	* lib/libc/asr/: asr.c, asr_private.h: Initially eric developers
+	  asr as a side-load style library for async DNS.  When it was
+	  integrated as the main resolver, a bunch of strange
+	  initialization code remained.  Start whittling away at this,
+	  piece by piece, to make it more clear.  ok eric
+
+2015-10-03 09:57  eric
+
+	* lib/libc/asr/: asr.c, asr_private.h: missing asr* -> _asr* symbol
+	  rename for building with debug code
+
+	  ok jca@
+
+2015-09-20 14:19  eric
+
+	* lib/libc/asr/asr.c: remove bogus includes of err.h
+
+2015-09-20 12:50  eric
+
+	* lib/libc/asr/asr.c: use _PATH_RESCONF directly
+
+2015-09-14 11:52  guenther
+
+	* lib/libc/asr/asr.c: Wrap <asr.h> so internal calls go direct and
+	  all the symbols are weak
+
+2015-09-13 08:31  guenther
+
+	* lib/libc/stdlib/reallocarray.c: Wrap <stdlib.h> so that calls go
+	  direct and the symbols not in the C standard are all weak.  Apply
+	  __{BEGIN,END}_HIDDEN_DECLS to gdtoa{,imp}.h, hiding the
+	  arch-specific __strtorx, __ULtox_D2A, __strtorQ, __ULtoQ_D2A
+	  symbols.
+
+2015-09-09 15:49  deraadt
+
+	* lib/libc/asr/: asr.c, asr_private.h: Hide all unnecessary asr /
+	  resolver related API with _ prefixes.  direction & ok guenther
+
+2015-09-02 13:47  deraadt
+
+	* lib/libc/asr/asr.c: use _PATH_RESCONF
+
+2015-06-20 01:16  jca
+
+	* lib/libc/asr/asr_private.h: Rename print_sockaddr() to avoid
+	  symbol visibility problems
+
+	  print_sockaddr is internal to asr, and conflicts with
+	  ports/net/samba4.
+
+	  ok eric@
+
+2015-06-04 19:23  eric
+
+	* lib/libc/asr/: asr.c, asr_private.h: make sure to check for
+	  resolv.conf update the first time the resolver is used after pid
+	  has changed.
+
+	  ok deraadt@
+
+2015-05-29 08:49  eric
+
+	* lib/libc/asr/: asr.c, asr_private.h: fix a possible off-by-one
+	  when reading /etc/hosts if it doesn't end with a newline.
+
+	  ok jca@
+
+2015-05-26 19:28  eric
+
+	* lib/libc/asr/: asr.c, asr_private.h: simply use _PATH_HOSTS where
+	  appropriate
+
+2015-04-14 22:16  nicm
+
+	* lib/libevent/event.3: Another couple of commas in the wrong
+	  place, ok jmc
+
+2015-04-14 21:34  nicm
+
+	* lib/libevent/event.3: Remove an extra comma pointed out by jmc@.
+
+2015-04-14 21:25  nicm
+
+	* lib/libevent/: Makefile, event.3: Reorder prototypes to better
+	  match manpage layout and add some missing argument names, from
+	  Fabian Raetz. ok deraadt
+
+2015-02-14 20:15  jca
+
+	* lib/libc/asr/asr_private.h: Limit AI_ADDRCONFIG effects to DNS
+	  queries.
+
+	  This is what RFC 2553 initially described, sadly RFC 3493 stopped
+	  limiting scope to DNS.  This can result in nonsensical failures
+	  with loopback addresses, link-local addresses, raw addresses and
+	  /etc/hosts entries.
+
+	  with and ok eric@ sperreault@
+
+2015-02-05 12:59  millert
+
+	* lib/libevent/buffer.c: Include stdint.h, not limits.h to get
+	  SIZE_MAX.  OK guenther@
+
+2015-01-20 04:41  krw
+
+	* regress/lib/libevent/test-init.c: Missing $OpenBSD$'s.
+
+	  ok deraadt@
+
+2015-01-16 16:48  deraadt
+
+	* lib/libc/asr/asr.c: Move to the <limits.h> universe.	review by
+	  millert, binary checking process with doug, concept with guenther
+
+2015-01-07 20:12  bluhm
+
+	* lib/libevent/buffer.c: Security fix for libevent 1.4
+	  CVE-2014-6272 in 5.5-stable.	OK deraadt@
+
+2015-01-07 20:05  bluhm
+
+	* lib/libevent/buffer.c: Security fix for libevent 1.4
+	  CVE-2014-6272 in 5.6-stable.	OK deraadt@
+
+2015-01-06 23:11  bluhm
+
+	* lib/libevent/event.c: Backout revision 1.37.	Setting
+	  ev->ev_pncalls to NULL results in a use after free if the
+	  callback has freed the ev.  With F in malloc.conf both tmux and
+	  the regression tests triggered a segmentation fault.	OK nicm@
+
+2015-01-06 11:42  bluhm
+
+	* lib/libevent/signal.c: Apply commit
+	  e0e6958aa074a7714cd7c4aa779a1dfede3a03b1 from upstream.  - Avoid
+	  deadlock when activating signals.  Fixes bug 3048812.    Based on
+	  patch by Nicholas Marriott.  The deadlock was ultimately fixed in
+	  a different way (by disabling reinit - see event.c r1.25).  Add
+	  it now for consistency but without the Windows compatibility
+	  code.  Convert the fnctl() calls to SOCK_CLOEXEC | SOCK_NONBLOCK
+	  to simplify the code.  OK nicm@
+
+2015-01-06 11:27  bluhm
+
+	* lib/libevent/event.c: Apply commit
+	  2d8cf0b720cdd5f9f292f174a10ff74e62a380ec from upstream.  -
+	  Defensive programming to prevent (hopefully impossible)
+	  stack-stomping OK nicm@
+
+2015-01-05 23:14  bluhm
+
+	* lib/libevent/: buffer.c, event.h: Fix CVE-2014-6272 in Libevent
+	  1.4 from upstream: -
+	  https://github.com/libevent/libevent/commit/7b21c4eabf1f3946d3f63cce1319c490caab8ecf
+	  - For this fix, we need to make sure that passing too-large
+	  inputs to   the evbuffer functions can't make us do bad things
+	  with the heap.  On top of that do: - Update libevent version to
+	  1.4.15-stable.  - Use SIZE_MAX from limits.h instead of a private
+	  define.  - Do not declare 'size_t need' twice to avoid a compiler
+	  warning.  OK sthen
+
+2014-12-08 03:45  bcook
+
+	* lib/libc/stdlib/reallocarray.c: avoid left shift overflow in
+	  reallocarray.
+
+	  Some 64-bit platforms (e.g. Windows 64) have a 32-bit long. So,
+	  shifting 1UL 32-bits to the left causes an overflow. This
+	  replaces the constant 1UL with (size_t)1 so that we get the
+	  correct constant size for the platform.
+
+	  discussed with tedu@ & deraadt@
+
+2014-11-21 07:44  dlg
+
+	* lib/libevent/buffer.c: libraries shouldnt print to stderr when
+	  things dont go their way.
+
+	  switch fprintf(stderr) over to event_warn() on malloc failure.
+	  fix up an errant newline in an existing event_warn while there.
+
+	  originally i just wanted to delete the fprintf diff from nicm@
+	  who is away from a keyboard right now so cant commit guenther@
+	  agrees with the idea
+
+2014-11-21 06:59  dlg
+
+	* lib/libevent/evbuffer_new.3: evbuffer_read will return 0 one an
+	  end of file condition.
+
+2014-11-20 13:39  jmc
+
+	* lib/libevent/evbuffer_new.3: zap some stray commas;
+
+2014-11-20 13:35  jmc
+
+	* lib/libevent/evbuffer_new.3: add evbuffer_expand to NAME;
+
+2014-11-20 13:34  jmc
+
+	* lib/libevent/Makefile: put MLINKS in the order they appear in the
+	  man page, so i don;t go blind trying to check what's missing;
+
+2014-11-20 01:49  dlg
+
+	* lib/libevent/evbuffer_new.3: document the only macro i find
+	  useful when working with evbuffers.
+
+2014-11-20 00:02  dlg
+
+	* lib/libevent/event.3: might help to Xr evbuffer_new 3
+
+2014-11-20 00:01  dlg
+
+	* lib/libevent/evbuffer_new.3: im not good at grammar things.
+
+	  from schwarze@
+
+2014-11-20 00:00  dlg
+
+	* lib/libevent/evbuffer_new.3: use .Va to say errno is a variable.
+
+	  from schwarze@
+
+2014-11-19 23:58  dlg
+
+	* lib/libevent/evbuffer_new.3: fix erroneous capitalisation of a
+	  word in the middle of a sentence.
+
+	  from schwarze again
+
+2014-11-19 23:57  dlg
+
+	* lib/libevent/evbuffer_new.3: less worse escapes for \ from ingo.
+	  im sure there's a much nicer way to represent newlines still.
+
+2014-11-19 23:55  dlg
+
+	* lib/libevent/: evbuffer_new.3, event.3: use .In to specify
+	  includes.
+
+2014-11-19 23:54  dlg
+
+	* lib/libevent/evbuffer_new.3: ingo also points out we're
+	  documenting things that work with evbuffers, not evbufbuffers.
+
+2014-11-19 23:53  dlg
+
+	* lib/libevent/evbuffer_new.3: ingo points out
+
+	  .Fo evbuffer_readln .Fa "struct evbuffer *buf" .Fa "size_t
+	  *read_out" .Fa "enum evbuffer_eol_style eol_style" .Fc
+
+	  is more readable mdoc for very long prototypes than lines like
+
+	  .Fn "evbuffer_readln" "struct evbuffer *buf" "size_t *read_out"
+	  "enum evbuffer_eol_style eol_style"
+
+2014-11-19 23:50  dlg
+
+	* lib/libevent/: Makefile, evbuffer_new.3, event.3: i got sick of
+	  having to read the source code to know what the evbuffer_foo
+	  functions do. reyk, nicm, jmc, and schwarze seem to support a
+	  manpage as a reasonable solution to this problem.
+
+	  im putting this in a separate manpage because i find they get too
+	  cumbersome when they get too big. ingo agrees (and suggests even
+	  this might be too big).
+
+	  the file is evbuffer_new.3 rather than evbuffer.3 because we
+	  document functions.
+
+	  ok reyk@ nicm@ jmc@ schwarze@ this is rough, everyone has tweaks
+	  coming.
+
+2014-11-19 20:29  jmc
+
+	* lib/libevent/event.3: BUGS is no longer relevant, according to
+	  nicm;
+
+2014-10-31 16:00  bluhm
+
+	* lib/libevent/event.h: Libevent has compatibilty wrappers in
+	  evutil.  OpenBSD does not use them anymore, but evutil is still
+	  part of libevent's interface.  Separate the API of evutil from
+	  libevent and do not include evutil.h from event.h automatically.
+	  A version bump is not necessary as the library itself does not
+	  change.  Bulk ports build done by landry@ had no fallout.  OK
+	  nicm@ deraadt@
+
+2014-10-31 12:50  bluhm
+
+	* lib/libevent/Makefile: Use CDIAGFLAGS from bsd.own.mk and append
+	  additional warning flags.  All warnings have been fixed in
+	  libevent.  OK nicm@
+
+2014-10-30 16:45  bluhm
+
+	* lib/libevent/: buffer.c, evbuffer.c, event.c, event.h,
+	  event_tagging.c, kqueue.c, log.c, poll.c, signal.c: Fix
+	  whitespace errors in libevent.  OK nicm@
+
+2014-10-30 13:43  bluhm
+
+	* lib/libevent/select.c: The fdsz and n_events variables contain
+	  unsigned values that are derived from size_t and passed to
+	  functions as size_t parameters.  Change them from int to size_t
+	  to avoid compiler warnings.  OK doug@ nicm@
+
+2014-10-29 22:47  bluhm
+
+	* lib/libevent/: buffer.c, evbuffer.c, event.c, event_tagging.c,
+	  kqueue.c, log.c, min_heap.h, poll.c, select.c, signal.c: After
+	  removing all the #ifdef, the wrappers in evutil are rather
+	  useless.  Let libevent call the libc functions directly.  OK
+	  nicm@
+
+2014-10-29 22:38  bluhm
+
+	* lib/libevent/kqueue.c: Remove workaround for Mac OS X kqueue bug.
+	  OK nicm@
+
+2014-10-29 22:31  bluhm
+
+	* lib/libevent/event_tagging.c: Do not cast a (const void *)
+	  pointer to (void *) to avoid a warning.  OK nicm@
+
+2014-10-18 21:56  bluhm
+
+	* lib/libevent/: buffer.c, evutil.c, kqueue.c, select.c: Remove
+	  some #ifdef from libevent.  OK nicm@
+
+2014-10-18 16:48  bluhm
+
+	* lib/libevent/: Makefile, buffer.c, evutil.c, kqueue.c, select.c,
+	  signal.c: Remove the remaining #ifdef HAVE_ and the #define
+	  _GNU_SOURCE.	OK nicm@
+
+2014-10-17 22:59  bluhm
+
+	* lib/libevent/: Makefile, event.c: Remove #ifdef HAVE_backend and
+	  remove references to unimplemented backends.	OK nicm@
+
+2014-10-17 20:52  bluhm
+
+	* lib/libevent/: Makefile, event.c, evutil.c: Remove some #ifdef
+	  HAVE_syscall.  OK nicm@
+
+2014-10-17 19:16  bluhm
+
+	* lib/libevent/: Makefile, buffer.c, evbuffer.c, event.c,
+	  event_tagging.c, evutil.c, kqueue.c, log.c, poll.c, select.c,
+	  signal.c: Remove #ifdef HAVE_.*_H, just include the header files.
+	  Do not include sys/param.h.	OK nicm@
+
+2014-10-16 07:38  bluhm
+
+	* lib/libevent/: buffer.c, evbuffer.c, event.c, event_tagging.c,
+	  evutil.c, kqueue.c, log.c, poll.c, select.c, signal.c: Remove
+	  #ifdef HAVE_CONFIG_H, there is no config.h file.  OK nicm@
+
+2014-10-15 22:34  bluhm
+
+	* lib/libevent/: Makefile, event-internal.h: Remove #ifndef
+	  HAVE_TAILQFOREACH containing a private tailq implementation.	OK
+	  nicm@
+
+2014-10-11 04:07  doug
+
+	* lib/libevent/select.c: Userland reallocarray() audit.
+
+	  Avoid potential integer overflow in the size argument of malloc()
+	  and realloc() by using reallocarray() to avoid unchecked
+	  multiplication.
+
+	  ok deraadt@
+
+2014-10-08 20:14  bluhm
+
+	* lib/libevent/: buffer.c, evbuffer.c, event.c, event.h,
+	  event_tagging.c, evutil.c, log.c, signal.c: iRemove the #ifdef
+	  WIN32 implementation from libevent.  OK nicm@
+
+2014-10-08 05:41  deraadt
+
+	* lib/libevent/: kqueue.c, poll.c, signal.c: use reallocarray() to
+	  detect multiplicative integer overflow; obvious pattern.  This
+	  commit does not fix the non-obvious bloody horror of select.c.
+
+2014-10-06 21:16  bluhm
+
+	* lib/libevent/: Makefile, evsignal.h, signal.c: Remove the #ifdef
+	  HAVE_SIGACTION from libevent.  The struct evsignal_info does not
+	  change, so no library crank.	OK nicm@ deraadt@
+
+2014-09-15 06:15  guenther
+
+	* lib/libc/asr/asr.c: When fopen()ing internal to libc (the API
+	  doesn't support the use of the resulting FILE *), then pass
+	  fopen() the 'e' mode letter to mark it close-on-exec.
+
+	  ok miod@
+
+2014-09-13 16:06  doug
+
+	* lib/libevent/event-internal.h: Replace all queue *_END macro
+	  calls except CIRCLEQ_END with NULL.
+
+	  CIRCLEQ_* is deprecated and not called in the tree.  The other
+	  queue types have *_END macros which were added for symmetry with
+	  CIRCLEQ_END.	They are defined as NULL.  There's no reason to
+	  keep the other *_END macro calls.
+
+	  ok millert@
+
+2014-09-01 13:26  bluhm
+
+	* lib/libevent/event.c: The libevent event_log() function called by
+	  event_msgx() adds a new line itself.	Do not print a double new
+	  line when EVENT_SHOW_METHOD is set.  OK nicm@
+
+2014-07-19 18:15  miod
+
+	* share/mk/bsd.regress.mk: Explicitely check the value of
+	  REGRESS_SKIP_SLOW rather than its emptyness, for it defaults to a
+	  non-empty value; Doug Hogan
+
+2014-05-08 21:43  deraadt
+
+	* lib/libc/stdlib/reallocarray.c: move reallocarray() to a seperate
+	  file so that -portable applications can avoid reinventing the
+	  wheel ok guenther schwarze
+
+2014-04-17 15:28  guenther
+
+	* lib/libc/asr/asr_private.h: Don't default enable the debug
+	  functionality with its unprotected getenv().
+
+	  ok eric@ sthen@ deraadt@
+
+2014-04-03 13:30  jmc
+
+	* lib/libevent/event.3: sort SEE ALSO;
+
+2014-04-03 11:27  eric
+
+	* lib/libevent/: Makefile, event.3, event.c, event.h,
+	  shlib_version: add helper functions to use asr with libevent.
+
+	  ok deraadt@
+
+2014-03-26 18:13  eric
+
+	* include/asr.h, lib/libc/asr/asr.c: Make the asr API public.
+	  Install asr.h to /usr/include.h and manpages.  Include tweaks
+	  suggested by mpi@
+
+	  ok deraadt@
+
+2014-03-25 19:48  eric
+
+	* lib/libc/asr/: asr.c, asr_private.h: Cleanup and simplify the API
+	  to be exposed.  Use better names for structures, functions and
+	  defines.
+
+	  discussed with and ok deraadt@ guenther@
+
+2014-03-14 11:07  eric
+
+	* lib/libc/asr/asr_private.h: prefix structure names to avoid
+	  ambiguity and possible collisions when the API gets public.
+
+	  ok deraadt@
+
+2013-08-24 10:46  dlg
+
+	* lib/libevent/: poll.c, select.c: replace random() with
+	  arc4random.
+
+	  blambert didnt like stuff linking to libevent getting warnings
+	  about use of an unsafe api.
+
+	  ok blambert@ mikeb@ deraadt@ millert@
+
+2013-08-13 05:52  guenther
+
+	* lib/libevent/shlib_version: Switch time_t, ino_t, clock_t, and
+	  struct kevent's ident and data members to 64bit types.  Assign
+	  new syscall numbers for (almost all) the syscalls that involve
+	  the affected types, including anything with time_t, timeval,
+	  itimerval, timespec, rusage, dirent, stat, or kevent arguments.
+	  Add a d_off member to struct dirent and replace getdirentries()
+	  with getdents(), thus immensely simplifying and accelerating
+	  telldir/seekdir.  Build perl with -DBIG_TIME.
+
+	  Bump the major on every single base library: the compat bits
+	  included here are only good enough to make the transition; the
+	  T32 compat option will be burned as soon as we've reached the new
+	  world are are happy with the snapshots for all architectures.
+
+	  DANGER: ABI incompatibility.	Updating to this kernel requires
+	  extra work or you won't be able to login: install a snapshot
+	  instead.
+
+	  Much assistance in fixing userland issues from deraadt@ and tedu@
+	  and build assistance from todd@ and otto@
+
+2013-08-01 20:43  kettenis
+
+	* share/mk/bsd.regress.mk: Don't error out if there are no
+	  regression for a particular architecture in a subdirectory.
+
+2013-07-12 14:36  eric
+
+	* lib/libc/asr/: asr.c, asr_private.h: Make some symbols static and
+	  prefix all visible symbols with asr_ to prevent collisions with
+	  third-party programs.
+
+	  suggested by sthen@, ok theo@
+
+2013-06-14 22:38  halex
+
+	* share/mk/bsd.regress.mk: introduce REGRESS_FAIL_EARLY to stop
+	  regression tests at first encountered failure
+
+	  ok phessler@ bluhm@
+
+2013-06-01 15:02  eric
+
+	* lib/libc/asr/: asr.c, asr_private.h: Move search domain iteration
+	  code in res_search_async.c where it belongs.
+
+2013-06-01 14:34  eric
+
+	* lib/libc/asr/: asr.c, asr_private.h: Make hostaliases work for
+	  gethostbyname() and getaddrinfo() when looking into /etc/hosts.
+	  Remove the alias check from the search domain iteration. Instead,
+	  take a shortcut to res_query_async_ctx() in
+	  res_search_async_ctx().
+
+2013-06-01 12:38  eric
+
+	* lib/libc/asr/: asr.c, asr_private.h: Update asr_hostaliases() to
+	  make all necessary checks in the function.  Explicitely check for
+	  issetguid() before calling getenv().	Also make asr_hostalias()
+	  callable from other parts of asr too.
+
+2013-06-01 09:21  eric
+
+	* lib/libc/asr/: asr.c, asr_private.h: iterating over the ns list
+	  only matters for res_send_async.c, so move things around.
+
+2013-05-27 17:31  eric
+
+	* lib/libc/asr/: asr.c, asr_private.h: Add minimal support for _res
+	  setup and update.
+
+	  Change res_init() to initialize the _res structure on first call,
+	  and udpate the global async context if changes were made by the
+	  user. All resolver functions now call res_init() internally.
+
+	  fixes issue spotted by otto@
+
+2013-04-30 12:02  eric
+
+	* lib/libc/asr/: asr.c, asr_private.h: Do not take external buffers
+	  for storing DNS responses in the internal async API.	That is
+	  actually useless and it makes the code more complicated.  The
+	  required buffers are always allocated when needed.
+
+2013-04-29 00:28  okan
+
+	* lib/libevent/signal.c: use FD_CLOEXEC instead of 1; from David
+	  Hill
+
+	  ok otto
+
+2013-04-17 19:13  otto
+
+	* lib/libc/asr/asr.c: check return value of strdup(), fix mem leak
+	  in error path and take into account that asr_use_resolver() can
+	  return NULL; ok tedu@ eric@
+
+2013-04-17 15:33  deraadt
+
+	* lib/libevent/event_tagging.c: evtag_marshal_timeval() truncates
+	  tv_sec to 32 bits, not passing the high bits.  Mark it with XXX
+	  2038.  I think it is poor style to create a "marshalling layer"
+	  which throws away information someone might need.  ok nicm, who
+	  will pass the news upstream and ask for them to fix it
+
+2013-04-17 15:31  deraadt
+
+	* lib/libevent/event.c: (long long) and %lld for big time_t ok
+	  nicm, who will pass it upstream
+
+2013-04-17 02:09  deraadt
+
+	* lib/libc/asr/asr.c: give a timespec a name that is easier to
+	  verify
+
+2013-04-11 20:19  otto
+
+	* lib/libc/asr/asr.c: Proper access of _THREAD_PRIVATE storage.
+	  Avoids a mem leak and reinit of resolver context for each
+	  resolver call for single threaded programs. With and ok tedu@ ok
+	  eric@
+
+2013-04-02 16:38  eric
+
+	* lib/libc/asr/asr_private.h: better implementation for tcp_read()
+	  that can get the packet length in multiple read.
+
+	  prodded by deraadt@
+
+2013-04-01 20:41  eric
+
+	* lib/libc/asr/asr.c: If more than one lookup line is found in
+	  resolv.conf, the latest one takes precedence.  Simplify code
+	  while there.
+
+	  suggested by deraadt@
+
+2013-04-01 20:22  eric
+
+	* lib/libc/asr/asr.c: properly check for domain name truncation at
+	  various places and fail if that happens.
+
+	  prodded by deraadt@
+
+2013-04-01 16:04  deraadt
+
+	* lib/libc/asr/asr_private.h: space cleanup; ok eric
+
+2013-04-01 15:49  deraadt
+
+	* lib/libc/asr/: asr.c, asr_private.h: space cleanup; ok eric
+
+2013-04-01 08:54  eric
+
+	* lib/libc/asr/asr_private.h: rename field
+
+2013-04-01 07:52  eric
+
+	* lib/libc/asr/asr_private.h: simpler and saner implementation for
+	  tcp_write(). now fully handles short writes.
+
+	  prodded by deraadt@
+
+2013-03-31 19:42  eric
+
+	* lib/libc/asr/asr.c: Principle of least astonishment: implement
+	  nameserver retry/backoff as in the former resolver.
+
+2013-03-30 20:00  eric
+
+	* lib/libc/asr/asr.c: Do not assume local nameserver if resolv.conf
+	  doesn't exist, just use /etc/hosts.
+
+	  discussed with deraadt@
+
+2013-03-30 08:06  otto
+
+	* lib/libc/asr/asr.c: don't ever skip reload the very first time;
+	  detective work by rpe@; ok eric@
+
+2013-03-27 07:40  eric
+
+	* lib/libc/asr/: asr.c, asr_private.h: Only use the search domains
+	  for DNS lookups, as the current resolver does.  Better not
+	  diverge too much in behavior at this point.  Typo fix and doc
+	  update while there.
+
+2012-11-24 15:12  eric
+
+	* lib/libc/asr/: asr.c, asr_private.h: knf
+
+2012-11-24 13:59  eric
+
+	* lib/libc/asr/asr_private.h: make separate structures for pack and
+	  unpack
+
+2012-09-09 16:45  eric
+
+	* lib/libc/asr/asr.c: tweak options
+
+2012-09-09 12:46  eric
+
+	* lib/libc/asr/asr.c: allow to disable some features at build time
+
+2012-09-09 12:15  eric
+
+	* lib/libc/asr/: asr.c, asr_private.h: cleanup asr_debug.c
+
+2012-09-09 09:42  eric
+
+	* lib/libc/asr/: asr.c, asr_private.h: use proper macros for debug
+	  traces.
+
+2012-09-07 13:49  eric
+
+	* lib/libc/asr/asr.c: return value has no use; make it void.  fix
+	  comment.
+
+2012-09-06 19:59  eric
+
+	* lib/libc/asr/asr.c: config parsing is done in one pass now. no
+	  need to use callback anymore.
+
+2012-09-06 13:57  eric
+
+	* lib/libc/asr/asr_private.h: make it easy to build without debug
+	  code
+
+2012-09-06 11:26  eric
+
+	* lib/libc/asr/asr.c: add a strsplit() helper to factorize code a
+	  bit.
+
+2012-09-05 21:49  eric
+
+	* lib/libc/asr/: asr.c, asr_private.h: Get rid of the
+	  hostaddr_async subquery and merge its behaviour directly into
+	  getaddrinfo_async_run.  Simplifies everything by a great deal.
+
+2012-09-05 15:56  eric
+
+	* lib/libc/asr/: asr.c, asr_private.h: Make hostaddr_async() return
+	  a linked list of struct addrinfo.  First round of a
+	  getaddrinfo_async() simplification. The goal is to make YP
+	  support easier to add, and eventually remove the whole
+	  hostaddr_async subquery.
+
+2012-08-28 09:09  pascal
+
+	* lib/libevent/: event.c, event.h, shlib_version: Expose
+	  _EVENT_VERSION in event.h.  This is expected by net/tor, which
+	  will spew out scary warnings if it's not there.  Bump minor
+	  accordingly.
+
+	  Requested by and ok dcoppa@, ok nicm@
+
+2012-08-18 16:48  eric
+
+	* lib/libc/asr/asr.c: ensure that async_run() and async_run_sync()
+	  always preserve errno.
+
+2012-08-02 13:38  okan
+
+	* lib/libevent/Makefile: remove leftover NOLINT, WANTLINT,
+	  LINTFLAGS, LOBJ vars and lint targets.
+
+	  ok guenther@
+
+2012-07-07 20:41  eric
+
+	* lib/libc/asr/asr_private.h: rename function to avoid symbol clash
+
+2012-04-15 22:25  eric
+
+	* lib/libc/asr/asr.c: Create a new resolver for each thread.  It
+	  will be done differently eventually, but it's enough for now to
+	  make the blocking API fully thread-safe without locking.
+
+2012-04-14 12:06  eric
+
+	* lib/libc/asr/: asr.c, asr_private.h: only define DEBUG internally
+
+2012-04-14 09:24  eric
+
+	* lib/libc/asr/: asr.c, asr_private.h: Import asr, an experimental
+	  async resolver implementation.  The idea is to eventually replace
+	  the existing resolver with something better. Time to start
+	  working on it in tree.
+
+	  ok deraadt@
+
+2012-02-08 09:01  nicm
+
+	* lib/libevent/kqueue.c: r1.27 changed libevent to fire a read
+	  event when kqueue returned EBADF (and several other things,
+	  particularly EPIPE) on a file descriptor. This causes Google
+	  Chrome to die (probably due to a bug in Chrome but finding that
+	  is next to impossible at the moment).
+
+	  It's not really clear what libevent should when an invalid fd is
+	  added - the poll backend doesn't fire an event and select exits
+	  the event loop. Until this is settled, change kqueue to match
+	  poll and ignore EBADF, keeping the behaviour r1.27 fixed on
+	  EPIPE.
+
+	  Fix from robert@.
+
+2012-01-30 09:45  nicm
+
+	* lib/libevent/kqueue.c: Handle a wider range of kqueue error
+	  return values for an event, prevents libevent exiting the event
+	  loop when getting EPIPE. Problem first seen by drahn@ and more
+	  recently hit by gilles@, fix based on one by Nick Mathewson.
+
+	  ok gilles
+
+2011-07-07 14:25  sobrado
+
+	* lib/libevent/event.h: fix typos; while here, improve spacing in
+	  comments.
+
+	  changes to libevent and zlib headers sent to the upstream
+	  maintainers.
+
+	  ok jmc@ (for typos), millert@
+
+2010-08-30 07:54  nicm
+
+	* lib/libevent/event.c: Fix from upstream to make all backends
+	  reinit on event_reinit(). This was not being done for poll and
+	  select, so after fork they would remain using the same socketpair
+	  for signal notification, leading to a race between the two
+	  processes to read from it and hangs.
+
+	  Problem originally reported by kili@.
+
+	  ok gilles
+
+2010-07-17 17:16  chl
+
+	* lib/libevent/buffer.c: add missing header needed by event_warn()
+
+	  ok nicm@
+
+2010-07-12 18:03  nicm
+
+	* lib/libevent/: buffer.c, event.c, evutil.c, kqueue.c, min_heap.h,
+	  signal.c: Update to 1.4.14b.
+
+	  From their change log:  o Fix memory-leak of signal handler array
+	  with kqueue. [backport]  o Make evutil_make_socket_nonblocking()
+	  leave any other flags alone.	 o Adjusted fcntl() retval
+	  comparison on evutil_make_socket_nonblocking().   o Re-add
+	  event_siglcb; some old code _was_ still using it. :(	 o Fix a
+	  free(NULL) in min_heap.h   o Clean up properly when adding a
+	  signal handler fails.
+
+	  Also a local change to use an int rather than a long for fcntl().
+
+	  ok guenther deraadt
+
+2010-06-26 23:31  nicm
+
+	* regress/lib/libevent/: Makefile, event_regress.c, eventtest.c,
+	  test-eof.c, test-init.c, test-time.c, test-weof.c: New libevent
+	  regression tests from upstream.
+
+	  help and ok phessler
+
+2010-05-31 20:56  nicm
+
+	* lib/libevent/event.h: Hide the timeout_* macros under an
+	  EVENT_DEPRECATED ifdef. These names invite conflicts, they are
+	  rarely used, can trivially be replaced by evtimer_*, and are
+	  deprecated and removed from event.h in later libevent versions.
+
+	  ok guenther deraadt
+
+2010-04-22 16:35  jmc
+
+	* lib/libevent/event.3: tweak previous; ok nicm
+
+2010-04-22 08:16  nicm
+
+	* lib/libevent/evutil.h: Whoops, EVUTIL_SET_SOCKET_ERROR went
+	  missing.
+
+2010-04-21 21:02  nicm
+
+	* lib/libevent/: Makefile, event-config.h, event.c, event.h,
+	  evutil.c, evutil.h, select.c: Clean up the awful _EVENT_* poo in
+	  the libevent headers, and don't install event-config.h.
+
+	  Pointed out by deraadt.
+
+2010-04-21 20:02  nicm
+
+	* lib/libevent/: Makefile, buffer.c, evbuffer.c, evdns.3, evdns.c,
+	  evdns.h, event-config.h, event-internal.h, event.3, event.c,
+	  event.h, event_tagging.c, evsignal.h, evutil.c, evutil.h,
+	  kqueue.c, log.c, log.h, min_heap.h, poll.c, select.c,
+	  shlib_version, signal.c: Update libevent to 1.4.13.
+
+	  This is the core library only, the DNS parts are removed and it
+	  does not include the other extra bits (HTTP, DNS, and RPC), a
+	  separate port for these will appear in due course.
+
+	  Thanks to jsg, sthen, alek, gilles, jacekm, bernd and any others
+	  I've forgotten for testing/comments.
+
+	  Note that /usr/include/evdns.h should be removed after updating.
+
+	  ok deraadt
+
+2010-01-10 00:36  guenther
+
+	* lib/libevent/signal.c: Fix evsignal_del()'s use of sigaction():
+	  fill in a sigaction struct and pass a pointer to that instead of
+	  passing SIG_DFL directly.  (Probably the result of a bad
+	  signal()-->sigaction() translation...)
+
+	  ok deraadt@, nicm@, miod@
+
+2009-11-12 05:44  deraadt
+
+	* lib/libevent/event.c: change back to preferring kqueue, now that
+	  nicm, tedu and i have fixed it (or, all the issues we are aware
+	  of so far).  discussed with nicm
+
+2009-10-30 13:51  deraadt
+
+	* lib/libevent/event.c: stop using kqueue.
+
+2009-10-13 12:16  jacekm
+
+	* lib/libevent/buffer.c: In evbuffer_readline, do not lose data
+	  upon malloc failure.	From mainstream:
+	  http://levent.svn.sourceforge.net/viewvc/levent?view=rev&revision=1436
+	  ok gilles@
+
+2008-05-09 18:43  brad
+
+	* regress/lib/libevent/Makefile: Fix the include path passed via
+	  CFLAGS so that this will compile.. one too many ../ in the path.
+	  Somehow managed to get a symlink in the right spot that made this
+	  work as it was.
+
+	  Pointed out by david@
+
+2008-05-04 21:14  brad
+
+	* regress/lib/libevent/: Makefile, eventtest.c: Some additional
+	  tests.
+
+	  From the libevent SVN repo.
+
+	  ok millert@
+
+2008-05-02 18:26  brad
+
+	* lib/libevent/: evbuffer.c, event.3, event.c, event.h: - Use a
+	  const pointer for bufferevent_write.	- Make event_init return
+	  struct event_base *.
+
+	  From the libevent SVN repo.
+
+	  ok millert@
+
+2008-05-02 15:55  brad
+
+	* lib/libevent/: evdns.c, evdns.h: - Increment MAX_ADDRS in evdns
+	  so as to be quite large.  - Accept as well-formed DNS replies
+	  with questions but no answers.  - Fix for crash in
+	  evdns_resolve_reverse_ipv6().  - Move end of "extern C {" block
+	  to the end of evdns.h.
+
+	  From the libevent SVN repo.
+
+	  ok millert@
+
+2008-05-02 09:18  jmc
+
+	* lib/libevent/: Makefile, event.3: Makefile: sort MLINKS and add
+	  event_base_once.3 event.3: fix NAME and remove spurious blank
+	  line
+
+2008-05-02 06:09  brad
+
+	* lib/libevent/buffer.c, lib/libevent/evdns.c,
+	  lib/libevent/evdns.h, lib/libevent/event-internal.h,
+	  lib/libevent/event.3, lib/libevent/event.c, lib/libevent/event.h,
+	  lib/libevent/event_tagging.c, lib/libevent/evsignal.h,
+	  lib/libevent/kqueue.c, lib/libevent/log.h, lib/libevent/poll.c,
+	  lib/libevent/select.c, lib/libevent/shlib_version,
+	  lib/libevent/signal.c, regress/lib/libevent/eventtest.c: Update
+	  to libevent 1.3e while retaining our local changes.
+
+	  "No objection" millert@ "the diff looks and works fine" reyk@
+
+2007-09-19 02:06  todd
+
+	* regress/lib/libevent/eventtest.c: permit this to compile with gcc
+	  2.x ok cloder@
+
+2007-09-02 15:19  deraadt
+
+	* lib/libevent/kqueue.c: use calloc() to avoid malloc(n * m)
+	  overflows; checked by djm canacar jsg
+
+2007-06-04 13:29  pedro
+
+	* lib/libevent/evhttp.h: Remove evhttp leftover, okay millert@
+
+2007-05-31 19:19  jmc
+
+	* lib/libevent/: evdns.3, event.3: convert to new .Dd format;
+
+2007-03-26 18:43  deraadt
+
+	* lib/libevent/event.3: do not doc the http parts
+
+2007-03-26 18:43  deraadt
+
+	* lib/libevent/: Makefile, http-internal.h, http.c: do not ship the
+	  http parts for now; ok millert
+
+2007-03-22 12:59  deraadt
+
+	* lib/libevent/Makefile: nicer MLINKS chunk
+
+2007-03-21 13:52  millert
+
+	* lib/libevent/event.3: Add missing const List evhttp stuff
+	  commented out, should probably get its own man page
+
+2007-03-21 13:41  millert
+
+	* lib/libevent/event.3: event_init() and event_dispatch() take
+	  void.  Add commented out entries for undocumented functions to be
+	  filled in later, preferably by someone who uses libevent.
+
+2007-03-21 12:52  jmc
+
+	* lib/libevent/evdns.3: fix a formatting issue found by reyk;
+
+2007-03-21 12:26  millert
+
+	* lib/libevent/: Makefile, evdns.c: Use arc4random() to generate
+	  random IDs.  In the future we may want to consider using
+	  res_randomid() but since evdns.c checks for duplicates this is
+	  not strictly necessary.
+
+2007-03-21 12:22  millert
+
+	* lib/libevent/: Makefile, event.3: Document event_base_free().  OK
+	  jmc@
+
+2007-03-19 20:32  jmc
+
+	* lib/libevent/event.3: +.Xr evdns 3 ,
+
+2007-03-19 20:30  jmc
+
+	* lib/libevent/evdns.3: further cleanup;
+
+2007-03-19 20:20  jmc
+
+	* lib/libevent/Makefile: add MLINKS for evdns_err_to_string() and
+	  evdns_nameserver_add();
+
+2007-03-19 20:12  jmc
+
+	* lib/libevent/evdns.3: clean up this page;
+
+2007-03-19 19:41  jmc
+
+	* lib/libevent/Makefile: provide MLINKS for evhttp_start() and
+	  evhttp_free();
+
+2007-03-19 19:31  jmc
+
+	* lib/libevent/event.3: tweaks;
+
+2007-03-19 15:12  millert
+
+	* lib/libevent/: Makefile, buffer.c, evbuffer.c, evdns.3, evdns.c,
+	  evdns.h, event-internal.h, event.3, event.c, event.h,
+	  event_tagging.c, evhttp.h, http-internal.h, http.c, kqueue.c,
+	  log.c, log.h, select.c, shlib_version, signal.c: Update to
+	  libevent-1.3b while retaining our local changes.  beck@ OK
+
+2007-02-13 20:10  millert
+
+	* lib/libevent/event.c: Avoid double recacl when loop_once is used.
+	  From libevent SVN via brad@.
+
+2007-02-13 20:08  millert
+
+	* lib/libevent/event.h: Add prototype for bufferevent_base_set().
+	  From the libevent SVN repo, by Thorsten Glaser via brad@
+
+2007-02-04 18:59  millert
+
+	* lib/libevent/: buffer.c, event.c, event.h: Two libevent fixes
+	  from the SVN repo: allow gotsig to terminate active event loop
+	  and evbuffer_find fix.  OK brad@ pyr@
+
+2006-12-21 02:28  krw
+
+	* lib/libevent/buffer.c: 'tranfer' -> 'transfer' in comments.
+
+2006-11-26 15:25  brad
+
+	* lib/libevent/buffer.c: fix a potential problem in multiple
+	  handling of va_list; use va_copy instead.
+
+	  From Niels Provos via the libevent SVN, by Alejo.
+
+	  ok deraadt@
+
+2006-11-26 15:24  brad
+
+	* lib/libevent/poll.c: fail without leaking memory when poll set
+	  extension fails.
+
+	  From Niels Provos via the libevent SVN
+
+	  ok deraadt@
+
+2006-11-26 15:22  brad
+
+	* lib/libevent/: evbuffer.c, event.3: allow both read and write
+	  callbacks for bufferevents to be NULL.
+
+	  From Niels Provos via the libevent SVN
+
+	  ok deraadt@
+
+2006-11-05 17:07  brad
+
+	* lib/libevent/kqueue.c: typo in kqueue delete.
+
+	  From Niels Provos via the libevent SVN repo, by Bert JW. Regeer
+
+	  ok deraadt@
+
+2006-11-05 03:39  brad
+
+	* lib/libevent/event.c: fix a potential memory leak in
+	  event_once().
+
+	  From Niels Provos via the libevent SVN repo, by Scott Lamb
+
+	  tested by niallo@
+
+	  ok deraadt@
+
+2006-10-21 12:04  deraadt
+
+	* lib/libevent/event.3: bufferevent_write() return code
+	  misdocumented; ok jmc
+
+2006-03-30 06:32  brad
+
+	* lib/libevent/: event.c, event.h, kqueue.c, poll.c, select.c,
+	  shlib_version: introduce a way to free the base.
+
+	  From libevent CVS
+
+2006-03-28 15:32  brad
+
+	* lib/libevent/: Makefile, event.c: use clock_gettime if available.
+
+	  From claudio@ via libevent CVS
+
+	  ok claudio@
+
+2006-03-23 10:51  jmc
+
+	* lib/libevent/event.3: new sentence, new line;
+
+2006-03-18 20:23  brad
+
+	* lib/libevent/: buffer.c, evbuffer.c, event.3, shlib_version: -
+	  limit the amount of data bufferevents are going to consume to
+	  something   reasonable; in some circumstances it could happen
+	  that libevent happily   allocated 100MB in read buffers without
+	  telling the user; found by   christopher maxwell - parts of these
+	  changes are from his patch.
+
+	  - allow setting an event base for bufferevents; from phil oleson
+
+	  - improved manpage from Phil Oleson
+
+	  From libevent CVS
+
+2006-02-09 06:18  brad
+
+	* lib/libevent/evbuffer.c: typo
+
+2006-01-25 05:25  brad
+
+	* lib/libevent/: buffer.c, event.3, event.h: another fix from art.
+
+	  From libevent CVS
+
+2006-01-23 20:19  brad
+
+	* regress/lib/libevent/eventtest.c: add a buffered event test.
+
+	  From libevent CVS
+
+2006-01-23 20:18  brad
+
+	* lib/libevent/: Makefile, buffer.c, event.3, event.h,
+	  shlib_version: add evbuffer_add_vprintf interface from artur
+	  grabowski
+
+	  From libevent CVS
+
+	  ok markus@
+
+2006-01-21 19:34  brad
+
+	* lib/libevent/Makefile: and some more links here too.
+
+2006-01-21 19:15  brad
+
+	* lib/libevent/event.3: add a few missing functions.
+
+	  From libevent CVS
+
+2005-12-25 02:51  brad
+
+	* regress/lib/libevent/eventtest.c: add two more tests.
+
+	  From libevent CVS
+
+2005-12-20 02:15  brad
+
+	* lib/libevent/kqueue.c: do not remove kq inkernel flag before
+	  event_del gets to it;
+
+	  From libevent CVS
+
+	  ok deraadt@
+
+2005-12-18 03:57  brad
+
+	* regress/lib/libevent/eventtest.c: rename test functions with
+	  meaningful names instead of 1 2 3, etc.
+
+	  From libevent CVS
+
+2005-12-02 16:54  deraadt
+
+	* lib/libevent/signal.c: make write-end of signal socketpair
+	  non-blocking.  every signal received writes 1 byte to the
+	  socketpair.  if you are outside the libevent main loop too long,
+	  the socketpair might fill up.  that write would then block, in a
+	  signal handler.  related to this, yesterdy we changed the signal
+	  handler to not trash errno.  as for the read end, there will be
+	  multiple libevent reads off the socketpair (100 bytes at a time)
+	  until the socketpair is empty again ok provos
+
+2005-12-02 04:41  deraadt
+
+	* lib/libevent/poll.c: pollops should be const
+
+2005-12-02 04:14  deraadt
+
+	* lib/libevent/signal.c: lookup out of evsigcaught[] must be
+	  sig_atomic_t too
+
+2005-12-01 21:08  deraadt
+
+	* lib/libevent/signal.c: save errno in signal handler since it does
+	  a system call only access sig_atomic_t variables, to make it
+	  further save ok aaron
+
+2005-11-24 20:49  deraadt
+
+	* lib/libevent/Makefile: use WANTLINT= (on all architectures)
+
+2005-10-12 18:54  deraadt
+
+	* lib/libevent/: Makefile, shlib_version: three new .so libraries
+	  to help the ports people who need (or might need) them for perl
+	  modules; discussion with pvalchev
+
+2005-10-11 18:50  jmc
+
+	* lib/libevent/Makefile: add missing MLINK for evbuffer_readline.3
+
+2005-07-02 07:15  grunk
+
+	* lib/libevent/: Makefile, buffer.c, evbuffer.c, event.c, kqueue.c,
+	  poll.c, signal.c: zap trailing whitespaces, no binary change
+
+	  ok brad@ beck@
+
+2005-06-22 01:05  brad
+
+	* lib/libevent/Makefile: CDIAGFLAGS
+
+	  From grunk@
+
+2005-06-18 01:52  brad
+
+	* lib/libevent/: buffer.c, event.3, event.h, kqueue.c, poll.c,
+	  select.c: update to libevent 1.1a; keep local changes
+
+	  ok grunk@
+
+2005-05-07 03:07  brad
+
+	* lib/libevent/event.h: this is libevent 1.0e
+
+2005-05-06 18:22  brad
+
+	* lib/libevent/: poll.c, select.c: fix comment, kqueue ->
+	  {poll,select}
+
+2005-05-04 03:17  brad
+
+	* lib/libevent/: buffer.c, evbuffer.c, event.3, event.c, event.h,
+	  kqueue.c, log.c, poll.c: update to libevent 1.0d; keep local
+	  changes
+
+	  thanks to Alexander von Gernler for testing and some bug fixes
+
+	  ok mpf@ norby@
+
+2005-04-22 08:32  jmc
+
+	* lib/libevent/event.3: - no need for .Pp before .Sh - sometime ->
+	  sometimes
+
+2005-04-22 01:28  brad
+
+	* regress/lib/libevent/eventtest.c: test event priorities.
+
+2005-04-22 01:10  brad
+
+	* lib/libevent/event.3: remove whitespace
+
+2005-04-22 01:01  brad
+
+	* lib/libevent/: Makefile, event.3: update to libevent 1.0c; keep
+	  local changes
+
+	  no shared lib so no ABI/API check is necessary
+
+	  thanks to Alexander von Gernler for submitting another diff in an
+	  attempt to update libevent and for a use-after-free fix.
+
+	  ok henning@ deraadt@
+
+2005-04-22 00:56  brad
+
+	* lib/libevent/: buffer.c, err.c, evbuffer.c, event-internal.h,
+	  event.c, event.h, kqueue.c, log.c, log.h, poll.c, select.c,
+	  signal.c: update to libevent 1.0c; keep local changes
+
+	  no shared lib so no ABI/API check is necessary
+
+	  thanks to Alexander von Gernler for submitting another diff in an
+	  attempt to update libevent and for a use-after-free fix.
+
+	  ok henning@ deraadt@
+
+2005-04-19 08:07  deraadt
+
+	* lib/libevent/: Makefile, buffer.c, err.c, evbuffer.c,
+	  event-internal.h, event.3, event.c, event.h, kqueue.c, log.c,
+	  log.h, poll.c, select.c, signal.c: backout.  not discussed, and
+	  very wrong.  bad brad
+
+2005-04-19 02:03  brad
+
+	* lib/libevent/: Makefile, buffer.c, err.c, evbuffer.c,
+	  event-internal.h, event.3, event.c, event.h, kqueue.c, log.c,
+	  log.h, poll.c, select.c, signal.c: update to libevent 1.0c; keep
+	  local changes
+
+2005-04-13 16:15  reyk
+
+	* lib/libevent/: event.3, event.c: use "volatile sig_atomic_t"
+	  types instead of "int" for signal flags.
+
+	  ok deraadt@ henning@ provos
+
+2005-02-02 09:59  jolan
+
+	* lib/libevent/event.3: authorative->authoritative
+
+2004-12-22 00:54  david
+
+	* regress/lib/libevent/eventtest.c: some
+	  -Wimplicit-function-declaration cleaning; ok millert@
+
+2004-11-25 16:48  brad
+
+	* regress/lib/libevent/eventtest.c: add regress test support for
+	  bufferevents
+
+	  From NetBSD
+
+	  ok markus@
+
+2004-06-20 17:45  markus
+
+	* lib/libevent/event.h: remove timeout_*() again; ok brad@
+
+2004-05-02 18:12  miod
+
+	* lib/libevent/Makefile: Do not define NOTE_EOF in CFLAGS. ok
+	  millert@
+
+2004-04-28 07:35  jmc
+
+	* lib/libevent/event.3: various tweaks;
+
+2004-04-28 06:53  brad
+
+	* lib/libevent/: Makefile, buffer.c, evbuffer.c, event.3, event.c,
+	  event.h, evsignal.h, kqueue.c, poll.c, select.c, signal.c: update
+	  to libevent 0.8; keep local changes
+
+	  ok markus@
+
+2004-01-05 19:23  markus
+
+	* regress/lib/libevent/eventtest.c: regress test for kqueue+EOF;
+	  marius aamodt eriksen
+
+2004-01-05 19:20  markus
+
+	* lib/libevent/kqueue.c: support NOTE_EOF; from marius aamodt
+	  eriksen; ok tedu, millert
+
+2003-10-01 09:10  markus
+
+	* lib/libevent/poll.c: poll fixes from Niels; ok deraadt
+
+2003-09-23 08:52  markus
+
+	* lib/libevent/Makefile, lib/libevent/event.3, lib/libevent/poll.c,
+	  regress/lib/libevent/Makefile: add support for poll(2); ok
+	  deraadt
+
+2003-07-31 21:48  deraadt
+
+	* regress/lib/libevent/eventtest.c: various cleanups; david says
+	  results are same
+
+2003-07-10 07:48  markus
+
+	* lib/libevent/: Makefile, config.h, signal.c: get rid of config.h;
+	  ok miod@, millert@, deraadt@
+
+2003-07-09 10:54  markus
+
+	* lib/libevent/: Makefile, event.3, event.c, evsignal.h, kqueue.c,
+	  select.c, signal.c: update to libevent-0.7a.tar.gz; keep local
+	  changes
+
+2003-06-20 08:01  markus
+
+	* lib/libevent/: Makefile.am, acconfig.h, aclocal.m4, configure,
+	  configure.in, mkinstalldirs, stamp-h.in, Makefile.in,
+	  config.h.in, install-sh: remove unused autoconf files
+
+2003-06-19 18:52  mickey
+
+	* lib/libevent/: event.c, kqueue.c, select.c: constify constant
+	  structures; niels ok
+
+2003-06-19 14:32  markus
+
+	* regress/lib/libevent/Makefile: the test depend on ${PROG};
+	  noticed by david@, mickey@
+
+2003-06-16 14:14  markus
+
+	* regress/lib/libevent/Makefile: use bsd.regress.mk
+
+2003-06-15 16:34  mickey
+
+	* regress/lib/libevent/: Makefile, eventtest.c: libevent regress
+	  from niels
+
+2003-06-03 20:26  deraadt
+
+	* lib/libevent/kqueue.c: do not honour getenv of EVENT_NOKQUEUE is
+	  issetugid; millert henning ok
+
+2003-06-03 01:27  art
+
+	* lib/libevent/event.3: license cleaning.
+
+2003-06-02 20:18  millert
+
+	* lib/libevent/err.c: Remove the advertising clause in the UCB
+	  license which Berkeley rescinded 22 July 1999.  Proofed by myself
+	  and Theo.
+
+2003-05-23 12:41  jmc
+
+	* lib/libevent/event.3: - typos - whitespace at EOL - new sentence,
+	  new line
+
+2003-03-10 04:02  david
+
+	* lib/libevent/kqueue.c: duplicate words and spelling fixes in
+	  comments ok miod@
+
+2003-03-06 20:59  deraadt
+
+	* lib/libevent/missing: no GNU allowed here
+
+2003-02-20 03:20  deraadt
+
+	* lib/libevent/Makefile: fix a variety of missing or wrong MLINKS
+
+2002-11-10 03:21  fgsch
+
+	* lib/libevent/event.3: SEE ALSO corrections. millert ok.
+
+2002-09-30 18:38  jsyn
+
+	* lib/libevent/event.3: grammar; ok deraadt@
+
+2002-09-15 18:58  itojun
+
+	* lib/libevent/select.c: Signal fixes from ericj@monkey.org via
+	  dugsong@monkey.org via provos
+
+2002-09-08 07:52  itojun
+
+	* lib/libevent/kqueue.c: typo.	from marius@umich.edu via provos
+
+2002-09-02 19:56  avsm
+
+	* share/mk/bsd.regress.mk: - Precede internal bsd.regress.mk
+	  variables with a _ - Rename old variables to be easier to read,
+	  and deprecate old variables.	The old variables will still work,
+	  but emit warnings.  - REGRESS_SKIP_SLOW only needs to be
+	  non-empty now, not explicitly set to 'yes' - REGRESS_LOG can
+	  contain more than one file to append results to - ERRORS variable
+	  can be set in Makefile to emit warnings or indicate fatal errors.
+	   - Add REGRESS_MAIL variable which can be set to an email address
+	  to send results to.  Currently this only works for a full
+	  regression run, since art doesnt want partial run results - sync
+	  bsd.regress.mk(5) with these changes
+
+	  ok art@ , also looked over by miod@
+
+2002-07-21 19:31  ericj
+
+	* lib/libevent/Makefile:
+	  link evtimer_* now, not timeout_* since it was changed for man
+	  pages.
+
+2002-07-12 18:50  provos
+
+	* lib/libevent/: event.3, event.h: change timeout_ API to evtimer_
+	  API; avoiding clashes with kernel include files.  okay mickey@
+
+2002-07-10 14:41  art
+
+	* lib/libevent/kqueue.c: Make EV_PERSIST work on EV_READ and
+	  EV_WRITE events.  provos@ ok.
+
+2002-07-05 20:04  provos
+
+	* lib/libevent/event.3: add sys/time.h to SYNOPSIS; from bk@rt.fm
+
+2002-06-25 19:46  mickey
+
+	* lib/libevent/event.h: undef the timeout_*(), this is still WRONG
+	  it does allow using both event.h and sys/timeout.h in the same
+	  source (which is a valid use for both), proper fix is to rename
+	  the timeout_*() api here
+
+2002-06-25 15:50  mickey
+
+	* lib/libevent/: Makefile, err.c, event.c, event.h, kqueue.c,
+	  select.c: rcsids
+
+2002-06-25 15:39  mpech
+
+	* lib/libevent/event.3: typos. Patch from bk@rt.fr
+
+	  millert@ ok
+
+2002-06-19 05:26  provos
+
+	* lib/libevent/kqueue.c: rename variable so that scoping is more
+	  obvious
+
+2002-06-18 22:05  deraadt
+
+	* lib/libevent/kqueue.c: need string.h
+
+2002-06-15 18:18  provos
+
+	* lib/libevent/Makefile: build static and profiled.
+
+2002-06-15 18:01  provos
+
+	* lib/libevent/: config.h.in, configure, configure.in, event.3,
+	  event.c, event.h, Makefile.in, aclocal.m4, config.h, err.c,
+	  install-sh, kqueue.c, missing, mkinstalldirs, select.c,
+	  stamp-h.in, Makefile.am, acconfig.h: Initial revision
+
+2002-06-15 18:01  provos
+
+	* lib/libevent/: config.h.in, configure, configure.in, event.3,
+	  event.c, event.h, Makefile.in, aclocal.m4, config.h, err.c,
+	  install-sh, kqueue.c, missing, mkinstalldirs, select.c,
+	  stamp-h.in, Makefile.am, acconfig.h: import libevent an event
+	  notification abstraction on top of select or kqueue supporting
+	  timeout and signal callsbacks, too.  okay deraadt@ millert@
+
+2002-02-17 01:10  marc
+
+	* share/mk/bsd.regress.mk: skip tests that require root
+	  (REGRESSROOTTARGETS) unless the user is root or SUDO is not
+	  empty.  OK art@
+
+2002-01-03 16:54  brad
+
+	* share/mk/bsd.regress.mk: use :L variable modifier
+
+2002-01-03 02:20  art
+
+	* share/mk/bsd.regress.mk: make regress the main target (now that
+	  dependencies are correct)
+
+2002-01-03 01:47  art
+
+	* share/mk/bsd.regress.mk: OpenBSD tag
+
+2002-01-03 01:46  art
+
+	* share/mk/bsd.regress.mk: s/timeout/possible timeout/ the test
+	  could simply fail.
+
+2002-01-03 01:01  art
+
+	* share/mk/bsd.regress.mk: Two new variables.	REGRESSSLOWTARGETS,
+	  contains a list of all regress targets that are slow.
+	  REGRESSSKIPSLOW, settable to "yes"/"no" (default is "no") when
+	  running    regress. Skips slow tests.
+
+	  (*for some arbitrary and very subjective value of "slow")
+
+2002-01-03 00:28  art
+
+	* share/mk/bsd.regress.mk: Support for a new variable
+	  REGRESSMAXTIME that sets the cpu time ulimit for tests. Needed
+	  for libc_r tests.  With some help from marc@
+
+2002-01-02 03:27  art
+
+	* share/mk/bsd.regress.mk: Eh? Why could I finish a make build with
+	  this 6 hours ago?
+
+2002-01-01 22:54  art
+
+	* share/mk/bsd.regress.mk: Start for a framework for regression
+	  tests. Simplifies the most common regress test targets, provides
+	  logging of success/failure and various minor features.
+
+	  Much Makefile magic from espie@ who thinks that my shell
+	  programming skills are "atrocious" (and I agree).
+
