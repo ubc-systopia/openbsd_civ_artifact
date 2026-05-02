@@ -41,7 +41,7 @@ dd if=/dev/urandom of=seeds/random_seed bs=1 count=16
 ```sh
 mkdir out_asan
 make clean
-AFL_USE_ASAN=1 make CC=afl-clang-lto
+AFL_USE_ASAN=1 AFL_USE_UBSAN=1 make CC=afl-clang-lto
 afl-fuzz -i seeds -o out_asan -- ./ldapd -d -f ../../etc/examples/ldapd.conf
 ```
 

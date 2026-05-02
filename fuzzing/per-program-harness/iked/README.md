@@ -59,7 +59,7 @@ mkdir -p build && cd build
 export AFL_PATH=/path/to/AFLplusplus    # source dir, not install dir
 CC=afl-clang-lto CXX=afl-clang-lto++ LDFLAGS=-lexecinfo \
     cmake -DCMAKE_BUILD_TYPE=Debug ..
-AFL_USE_ASAN=1 BUFFER_CHECKER_ROOT=$BUFFER_CHECKER_ROOT make -j4
+AFL_USE_ASAN=1 AFL_USE_UBSAN=1 BUFFER_CHECKER_ROOT=$BUFFER_CHECKER_ROOT make -j4
 
 # Sanity check: empty stdin should exit 0 after one IMSG_END_OF_MSGS per compartment.
 printf '' | ./iked/iked -d -f ../iked.conf

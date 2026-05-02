@@ -56,7 +56,7 @@ server "default" {
 ```sh
 export AFL_PATH=/path/to/AFLplusplus    # source dir, not install dir
 make clean
-AFL_USE_ASAN=1 BUFFER_CHECKER_ROOT=$BUFFER_CHECKER_ROOT \
+AFL_USE_ASAN=1 AFL_USE_UBSAN=1 BUFFER_CHECKER_ROOT=$BUFFER_CHECKER_ROOT \
     make CC=afl-clang-lto
 
 printf '' | ./httpd -d -f httpd.conf

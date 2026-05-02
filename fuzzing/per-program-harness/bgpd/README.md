@@ -48,7 +48,7 @@ make -C compat
 cd src/bgpd
 make clean
 export AFL_PATH=/path/to/AFLplusplus    # source dir, not install dir
-AFL_USE_ASAN=1 BUFFER_CHECKER_ROOT=$BUFFER_CHECKER_ROOT \
+AFL_USE_ASAN=1 AFL_USE_UBSAN=1 BUFFER_CHECKER_ROOT=$BUFFER_CHECKER_ROOT \
     make CC=afl-clang-lto
 
 printf '' | ./bgpd -d -f /usr/local/etc/bgpd.conf

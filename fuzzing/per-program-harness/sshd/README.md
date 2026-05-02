@@ -38,7 +38,7 @@ CC=afl-clang-lto ./configure --with-kerberos5 --with-pam
 
 ```sh
 mkdir out_asan
-AFL_USE_ASAN=1 make
+AFL_USE_ASAN=1 AFL_USE_UBSAN=1 make
 afl-fuzz -i in -o out_asan -g 4000 -m none -- $(pwd)/sshd-session -R
 ```
 

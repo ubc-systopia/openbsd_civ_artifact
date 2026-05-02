@@ -4,7 +4,7 @@ The source tree under `syslogd-src/` is a self-contained snapshot of an OpenBSD 
 
 Three sibling source directories share one harness layout:
 
-- `usr.sbin/syslogd-asan/` — fuzzed with `AFL_USE_ASAN=1`.
+- `usr.sbin/syslogd-asan/` — fuzzed with `AFL_USE_ASAN=1 AFL_USE_UBSAN=1`.
 - `usr.sbin/syslogd-normal/` — non-sanitized build, used as AFL `-S` secondaries.
 - `usr.sbin/syslogd-coverage/` — `--coverage` build for line-coverage measurement.
 
@@ -43,7 +43,7 @@ cd -
 ```sh
 cd syslogd-src/usr.sbin/syslogd-asan
 export AFL_PATH=/path/to/AFLplusplus     # source dir, not install dir
-AFL_USE_ASAN=1 BUFFER_CHECKER_ROOT=$BUFFER_CHECKER_ROOT \
+AFL_USE_ASAN=1 AFL_USE_UBSAN=1 BUFFER_CHECKER_ROOT=$BUFFER_CHECKER_ROOT \
     make CC=afl-clang-lto
 
 # Sanity check: empty stdin should print "quit event loop!" and exit 0.

@@ -47,7 +47,7 @@ cp PATH/TO/in/random_seed in/
 ```sh
 mkdir -p out_asan
 
-AFL_USE_ASAN=1 make CC=afl-clang-lto
+AFL_USE_ASAN=1 AFL_USE_UBSAN=1 make CC=afl-clang-lto
 
 afl-fuzz -i in -o out_asan -g 1024 -m none -- ./tmux -S ./tmux-socket
 ```

@@ -1,0 +1,305 @@
+diff -ruN a/mk/smtpd/Makefile.am b/mk/smtpd/Makefile.am
+--- a/mk/smtpd/Makefile.am	2026-04-30 21:02:45.607309000 -0700
++++ b/mk/smtpd/Makefile.am	2026-04-30 21:04:16.929532000 -0700
+@@ -120,9 +120,12 @@
+ 			-I$(top_srcdir)/usr.sbin/smtpd \
+ 			-I$(top_srcdir)/openbsd-compat \
+ 			-I$(top_srcdir)/openbsd-compat/libtls \
++			-I$(BUFFER_CHECKER_ROOT) \
+ 			-I$(srcdir) $(PATHS) @DEFS@
+ 
+-LDADD=			$(LIBOBJS) $(DB_LIB)
++LDADD=			$(LIBOBJS) $(DB_LIB) \
++			-L$(BUFFER_CHECKER_ROOT) -lmsg_generator -lbuffer_check
++AM_CFLAGS +=		-fsanitize-recover=memory
+ 
+ MANPAGES=		aliases.5.out forward.5.out smtpd.8.out	\
+ 			smtpd.conf.5.out smtpd-filters.7.out \
+diff -ruN a/usr.sbin/smtpd/ca.c b/usr.sbin/smtpd/ca.c
+--- a/usr.sbin/smtpd/ca.c	2026-04-30 21:02:45.620169000 -0700
++++ b/usr.sbin/smtpd/ca.c	2026-04-30 20:16:54.331777000 -0700
+@@ -291,6 +291,9 @@
+ 		free(to);
+ 		EC_KEY_free(ecdsa);
+ 		return;
++	case IMSG_EOM:
++		eom_counter_inc();
++		return;
+ 	}
+ 
+ 	fatalx("ca_imsg: unexpected %s imsg", imsg_to_str(imsg->hdr.type));
+diff -ruN a/usr.sbin/smtpd/control.c b/usr.sbin/smtpd/control.c
+--- a/usr.sbin/smtpd/control.c	2026-04-30 21:02:45.620747000 -0700
++++ b/usr.sbin/smtpd/control.c	2026-04-30 20:16:54.331764000 -0700
+@@ -157,6 +157,10 @@
+ 		if (stat_backend)
+ 			stat_backend->set(key, &val);
+ 		return;
++
++	case IMSG_EOM:
++		eom_counter_inc();
++		return;
+ 	}
+ 
+ 	fatalx("control_imsg: unexpected %s imsg",
+diff -ruN a/usr.sbin/smtpd/dispatcher.c b/usr.sbin/smtpd/dispatcher.c
+--- a/usr.sbin/smtpd/dispatcher.c	2026-04-30 21:02:45.621005000 -0700
++++ b/usr.sbin/smtpd/dispatcher.c	2026-04-30 20:16:54.331770000 -0700
+@@ -126,6 +126,9 @@
+ 	case IMSG_MDA_DONE:
+ 		mda_imsg(p, imsg);
+ 		return;
++	case IMSG_EOM:
++		eom_counter_inc();
++		return;
+ 	default:
+ 		break;
+ 	}
+diff -ruN a/usr.sbin/smtpd/lka.c b/usr.sbin/smtpd/lka.c
+--- a/usr.sbin/smtpd/lka.c	2026-04-30 21:02:45.622279000 -0700
++++ b/usr.sbin/smtpd/lka.c	2026-04-30 20:41:35.134814000 -0700
+@@ -632,6 +632,9 @@
+ 		lka_filter_data_end(reqid);
+ 		return;
+ 
++	case IMSG_EOM:
++		eom_counter_inc();
++		return;
+ 	}
+ 
+ 	fatalx("lka_imsg: unexpected %s imsg", imsg_to_str(imsg->hdr.type));
+diff -ruN a/usr.sbin/smtpd/parse.y b/usr.sbin/smtpd/parse.y
+--- a/usr.sbin/smtpd/parse.y	2026-04-30 21:02:45.625233000 -0700
++++ b/usr.sbin/smtpd/parse.y	2025-11-09 23:16:49.653470000 -0800
+@@ -2776,6 +2776,8 @@
+ 
+ static int	expanding;
+ 
++
++__attribute__((no_sanitize("memory")))
+ int
+ igetc(void)
+ {
+@@ -2797,6 +2799,7 @@
+ 	return (c);
+ }
+ 
++__attribute__((no_sanitize("memory")))
+ int
+ lgetc(int quotec)
+ {
+diff -ruN a/usr.sbin/smtpd/queue.c b/usr.sbin/smtpd/queue.c
+--- a/usr.sbin/smtpd/queue.c	2026-04-30 21:02:45.625644000 -0700
++++ b/usr.sbin/smtpd/queue.c	2026-04-30 20:16:54.331758000 -0700
+@@ -524,6 +524,10 @@
+ 		tv.tv_usec = 10;
+ 		evtimer_add(&wi->ev, &tv);
+ 		return;
++
++	case IMSG_EOM:
++		eom_counter_inc();
++		return;
+ 	}
+ 
+ 	fatalx("queue_imsg: unexpected %s imsg", imsg_to_str(imsg->hdr.type));
+diff -ruN a/usr.sbin/smtpd/smtpd.c b/usr.sbin/smtpd/smtpd.c
+--- a/usr.sbin/smtpd/smtpd.c	2026-04-30 21:02:45.629637000 -0700
++++ b/usr.sbin/smtpd/smtpd.c	2026-04-30 20:41:35.134767000 -0700
+@@ -86,6 +86,9 @@
+ 
+ #define SMTPD_MAXARG 32
+ 
++#include <msg_generator.h>
++#include <buffer_check_lib.h>
++
+ static void parent_imsg(struct mproc *, struct imsg *);
+ static void usage(void);
+ static int smtpd(void);
+@@ -145,7 +148,7 @@
+ 
+ #define OFFLINE_READMAX		20
+ #define OFFLINE_QUEUEMAX	5
+-static size_t			offline_running = 0;
++static size_t			offline_running = 1;
+ TAILQ_HEAD(, offline)		offline_q;
+ 
+ static struct event		config_ev;
+@@ -299,6 +302,9 @@
+ 		m_add_string(p_lka, procname);
+ 		m_close(p_lka);
+ 		return;
++	case IMSG_EOM:
++		eom_counter_inc();
++		return;
+ 	}
+ 
+ 	fatalx("parent_imsg: unexpected %s imsg from %s",
+@@ -786,12 +792,14 @@
+ 				fatal("imsgbuf_flush");
+ 		}
+ 
++		/*
+ 		setup_done(p_ca);
+ 		setup_done(p_control);
+ 		setup_done(p_lka);
+ 		setup_done(p_dispatcher);
+ 		setup_done(p_queue);
+ 		setup_done(p_scheduler);
++		*/
+ 
+ 		log_debug("smtpd: setup done");
+ 
+@@ -882,40 +890,31 @@
+ 	io_set_nonblocking(sp[0]);
+ 	io_set_nonblocking(sp[1]);
+ 
+-	switch (pid = fork()) {
+-	case -1:
+-		fatal("%s: fork", save_argv[0]);
+-	case 0:
+-		break;
+-	default:
+-		close(sp[0]);
++	/*
++	 * Harness: do not fork.  The parent keeps sp[0] (handed back via
++	 * mproc.other_fd) so the fuzzer can write imsgs into the child's
++	 * receive end.  All compartments end up running in the parent,
++	 * which is what makes single-process fuzzing tractable.
++	 */
++	(void)pid;
++	(void)save_argc;
++	{
++		static int mypid = 1234;
+ 		p = calloc(1, sizeof(*p));
+ 		if (p == NULL)
+ 			fatal("calloc");
+-		if((p->name = strdup(rexec)) == NULL)
++		if ((p->name = strdup(rexec)) == NULL)
+ 			fatal("strdup");
+ 		mproc_init(p, sp[1]);
+-		p->pid = pid;
++		p->pid = mypid++;
++		p->other_fd = sp[0];
+ 		p->handler = parent_imsg;
+ 		return p;
+ 	}
+ 
+-	if (sp[0] != 3) {
+-		if (dup2(sp[0], 3) == -1)
+-			fatal("%s: dup2", rexec);
+-	} else if (fcntl(sp[0], F_SETFD, 0) == -1)
+-		fatal("%s: fcntl", rexec);
+-
+-	xclosefrom(4);
+-
+-	for (argc = 0; argc < save_argc; argc++)
+-		argv[argc] = save_argv[argc];
+-	argv[argc++] = "-x";
+-	argv[argc++] = rexec;
+-	argv[argc++] = NULL;
+-
+-	execvp(argv[0], argv);
+-	fatal("%s: execvp", rexec);
++	(void)argv;
++	(void)argc;
++	return NULL;
+ }
+ 
+ static void
+@@ -1143,8 +1142,9 @@
+ 	if (pidfile(NULL) < 0)
+ 		err(1, "pidfile");
+ 
+-	fork_filter_processes();
++	// fork_filter_processes(); // ??? should we comment this out?
+ 
++
+ 	purge_task();
+ 
+ #if HAVE_PLEDGE
+@@ -1152,6 +1152,61 @@
+ 	    "getpw sendfd proc exec id inet chown unix", NULL) == -1)
+ 		fatal("pledge");
+ #endif
++
++	struct imsgbuf lka_buf, queue_buf, control_buf, scheduler_buf, dispatcher_buf, ca_buf;
++
++	if (p_lka)
++		imsgbuf_init(&lka_buf, p_lka->other_fd);
++	if (p_queue)
++		imsgbuf_init(&queue_buf, p_queue->other_fd);
++	if (p_control)
++		imsgbuf_init(&control_buf, p_control->other_fd);
++	if (p_scheduler)
++		imsgbuf_init(&scheduler_buf, p_scheduler->other_fd);
++	if (p_dispatcher)
++		imsgbuf_init(&dispatcher_buf, p_dispatcher->other_fd);
++	if (p_ca)
++		imsgbuf_init(&ca_buf, p_ca->other_fd);
++
++	struct msg_interface iface;
++	if (msg_interface_init(&iface, STDIN_FILENO, 6, IMSG_EOM) != MSG_GEN_SUCCESS)
++		fatalx("msg_interface_init failed");
++
++	msg_interface_set_endpoint(&iface, 0, &lka_buf);
++	msg_interface_set_endpoint(&iface, 1, &queue_buf);
++	msg_interface_set_endpoint(&iface, 2, &control_buf);
++	msg_interface_set_endpoint(&iface, 3, &scheduler_buf);
++	msg_interface_set_endpoint(&iface, 4, &dispatcher_buf);
++	msg_interface_set_endpoint(&iface, 5, &ca_buf);
++
++	msg_interface_set_eom_type(&iface, IMSG_EOM);
++
++	/* Scheduler does not dispatch IMSG_EOM, so expect EOMs from 5 endpoints. */
++	eom_counter_init(5);
++
++	struct msg_data msg;
++	while (msg_generate(&iface, &msg) == MSG_GEN_SUCCESS) {
++		struct imsgbuf *target = (struct imsgbuf *)msg.endpoint;
++		uint32_t peerid = *(uint32_t *)&msg.aux_data[0];
++		uint32_t pid = *(uint32_t *)&msg.aux_data[4];
++
++		ptr_check_skip(msg.payload, msg.actual_payload_size);
++		imsg_compose(target, msg.type, peerid, pid,
++		    msg.has_fd ? msg.fd : -1,
++		    msg.payload, msg.actual_payload_size);
++		imsgbuf_flush(target);
++	}
++
++	for (uint8_t i = 0; i < iface.num_compartments; i++) {
++		if (i == 3) /* skip scheduler */
++			continue;
++		struct msg_data eom_msg;
++		if (msg_generate_eom(&iface, i, &eom_msg) == MSG_GEN_SUCCESS) {
++			struct imsgbuf *target = (struct imsgbuf *)eom_msg.endpoint;
++			imsg_compose(target, eom_msg.type, 0, 0, -1, NULL, 0);
++			imsgbuf_flush(target);
++		}
++	}
+ 
+ 	event_dispatch();
+ 	fatalx("exited event loop");
+diff -ruN a/usr.sbin/smtpd/smtpd.h b/usr.sbin/smtpd/smtpd.h
+--- a/usr.sbin/smtpd/smtpd.h	2026-04-30 21:02:45.630081000 -0700
++++ b/usr.sbin/smtpd/smtpd.h	2026-04-30 20:16:54.331783000 -0700
+@@ -352,8 +352,12 @@
+ 	IMSG_CA_RSA_PRIVENC,
+ 	IMSG_CA_RSA_PRIVDEC,
+ 	IMSG_CA_ECDSA_SIGN,
++	IMSG_EOM,
+ };
+ 
++void	eom_counter_inc(void);
++void	eom_counter_init(int);
++
+ enum smtp_proc_type {
+ 	PROC_PARENT = 0,
+ 	PROC_LKA,
+@@ -1008,6 +1012,7 @@
+ 	uint32_t	 m_peerid;
+ 	pid_t		 m_pid;
+ 	int		 m_fd;
++	int		 other_fd;
+ 
+ 	int		 enable;
+ 	short		 events;

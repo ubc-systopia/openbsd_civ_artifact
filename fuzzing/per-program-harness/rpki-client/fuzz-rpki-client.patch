@@ -1,0 +1,256 @@
+diff -ruN a/src/Makefile.am b/src/Makefile.am
+--- a/src/Makefile.am	2026-05-01 17:15:25.412601000 -0700
++++ b/src/Makefile.am	2026-05-01 17:15:03.871000000 -0700
+@@ -15,6 +15,7 @@
+ 
+ AM_CPPFLAGS = -I$(top_srcdir)/include
+ AM_CPPFLAGS += -I$(top_srcdir)/src
++AM_CPPFLAGS += -I$(BUFFER_CHECKER_ROOT)
+ 
+ ACLOCAL_AMFLAGS = -Im4
+ 
+@@ -29,9 +30,15 @@
+ rpki_client_CFLAGS += -DRPKI_PATH_BASE_DIR=\"$(RPKI_BASE_DIR)\"
+ rpki_client_CFLAGS += -DRPKI_PATH_OUT_DIR=\"$(RPKI_OUT_DIR)\"
+ 
++rpki_client_LDFLAGS = -Wl,-rpath,$(BUFFER_CHECKER_ROOT)
++
+ rpki_client_LDADD = $(PLATFORM_LDADD) $(PROG_LDADD)
+ rpki_client_LDADD += $(top_builddir)/compat/libcompat.la
+ rpki_client_LDADD += $(top_builddir)/compat/libcompatnoopt.la
++rpki_client_LDADD += -lpthread
++rpki_client_LDADD += -L$(BUFFER_CHECKER_ROOT) -lmsg_generator
++rpki_client_LDADD += -L$(BUFFER_CHECKER_ROOT) -lbuffer_check
++AM_CFLAGS += -fsanitize-recover=memory
+ 
+ rpki_client_SOURCES = as.c
+ rpki_client_SOURCES += aspa.c
+diff -ruN a/src/extern.h b/src/extern.h
+--- a/src/extern.h	2026-05-01 17:15:28.696586000 -0700
++++ b/src/extern.h	2026-05-01 17:14:51.005242000 -0700
+@@ -187,6 +187,9 @@
+  * Resource types specified by the RPKI profiles.
+  * There might be others we don't consider.
+  */
++/* End of Message marker - used by all compartments */
++#define MSG_EOM		0xCAFEBABE
++
+ enum rtype {
+ 	RTYPE_INVALID,
+ 	RTYPE_TAL,
+diff -ruN a/src/main.c b/src/main.c
+--- a/src/main.c	2026-05-01 17:15:28.698776000 -0700
++++ b/src/main.c	2026-05-01 17:15:10.789427000 -0700
+@@ -47,7 +47,10 @@
+ 
+ #include "extern.h"
+ #include "version.h"
++#include <msg_generator.h>
+ 
++void eom_counter_init(int expected_eom);
++
+ const char	*tals[TALSZ_MAX];
+ const char	*taldescs[TALSZ_MAX];
+ unsigned int	 talrepocnt[TALSZ_MAX];
+@@ -62,6 +65,8 @@
+ static struct filepath_tree	fpt = RB_INITIALIZER(&fpt);
+ static struct msgbuf		*procq, *rsyncq, *httpq, *rrdpq;
+ static int			cachefd, outdirfd;
++// sockets that use to send fuzzer generated testcases
++int other_end[4];
+ 
+ int	verbose;
+ int	noop;
+@@ -584,6 +589,15 @@
+ 	 * We follow that up with whether the resources didn't parse.
+ 	 */
+ 	io_read_buf(b, &type, sizeof(type));
++	/*
++	 * Harness fast-path: the fuzzer-emitted MSG_EOM carries only the
++	 * type word.  Acknowledge it before the rest of the framing reads
++	 * try to consume bytes that aren't there.
++	 */
++	if ((unsigned int)type == MSG_EOM) {
++		eom_counter_inc();
++		return;
++	}
+ 	io_read_buf(b, &id, sizeof(id));
+ 	io_read_buf(b, &talid, sizeof(talid));
+ 	io_read_str(b, &file);
+@@ -755,6 +769,9 @@
+ 	case RRDP_CLEAR:
+ 		rrdp_clear(id);
+ 		break;
++	case MSG_EOM:
++		eom_counter_inc();
++		break;
+ 	default:
+ 		errx(1, "unexpected rrdp response");
+ 	}
+@@ -936,15 +953,38 @@
+ 	}
+ }
+ 
++/*
++ * Harness: do not fork.  The parent retains pair[0] (in other_end[]) so
++ * the fuzzer can write fuzzer-controlled bytes into the child's receive
++ * end (pair[1]).  All four compartments end up running in the parent,
++ * which is what makes single-process fuzzing tractable.
++ */
+ static pid_t
+-process_start(const char *title, int *fd)
++process_start(const char *title __attribute__((unused)), int *fd)
+ {
+-	int		 fl = SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK;
+-	pid_t		 pid;
+-	int		 pair[2];
++	int	fl = SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK;
++	int	pair[2];
++	static int compartment_number = 0;
+ 
+ 	if (socketpair(AF_UNIX, fl, 0, pair) == -1)
+ 		err(1, "socketpair");
++
++	other_end[compartment_number++] = pair[0];
++	*fd = pair[1];
++	return 1234;
++}
++
++#if 0
++/* Original fork+exec retained for reference; replaced by harness above. */
++static pid_t
++process_start_unused(const char *title, int *fd)
++{
++	pid_t pid;
++	int pair[2];
++	int fl = SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK;
++
++	if (socketpair(AF_UNIX, fl, 0, pair) == -1)
++		err(1, "socketpair");
+ 	if ((pid = fork()) == -1)
+ 		err(1, "fork");
+ 
+@@ -963,6 +1003,7 @@
+ 	}
+ 	return pid;
+ }
++#endif
+ 
+ void
+ suicide(int sig __attribute__((unused)))
+@@ -1302,6 +1343,77 @@
+ 	if (fchdir(cachefd) == -1)
+ 		err(1, "fchdir");
+ 
++	/*
++	 * Fuzzing harness: drive the four compartments (parser, rsync,
++	 * http, rrdp) from stdin via the message generator.  Parser and
++	 * RRDP expect a 4-byte type header on each message; rsync and
++	 * http read raw bytes.  After stdin is exhausted the harness
++	 * emits one MSG_EOM per compartment so receivers can exit(0).
++	 */
++	static struct msgbuf *parser_msgbuf, *rsync_msgbuf, *http_msgbuf, *rrdp_msgbuf;
++	parser_msgbuf = msgbuf_new_reader(sizeof(size_t), io_parse_hdr, NULL);
++	rsync_msgbuf = msgbuf_new_reader(sizeof(size_t), io_parse_hdr, NULL);
++	http_msgbuf = msgbuf_new_reader(sizeof(size_t), io_parse_hdr, NULL);
++	rrdp_msgbuf = msgbuf_new_reader(sizeof(size_t), io_parse_hdr, NULL);
++
++	struct msg_interface iface;
++	if (msg_interface_init(&iface, STDIN_FILENO, 4, 15) != MSG_GEN_SUCCESS)
++		errx(1, "Failed to initialize message interface");
++
++	msg_interface_set_endpoint(&iface, 0, parser_msgbuf);
++	msg_interface_set_endpoint(&iface, 1, rsync_msgbuf);
++	msg_interface_set_endpoint(&iface, 2, http_msgbuf);
++	msg_interface_set_endpoint(&iface, 3, rrdp_msgbuf);
++	msg_interface_set_eom_type(&iface, MSG_EOM);
++
++	struct msg_data msg;
++
++	while (msg_generate(&iface, &msg) == MSG_GEN_SUCCESS) {
++		struct msgbuf *target_msgbuf = (struct msgbuf *)msg.endpoint;
++		if (target_msgbuf == NULL)
++			continue;
++
++		struct ibuf *msg_buffer = io_new_buffer();
++
++		if (msg.compartment == 0 || msg.compartment == 3)
++			io_simple_buffer(msg_buffer, &msg.type, sizeof(msg.type));
++
++		if (msg.actual_payload_size > 0) {
++			io_simple_buffer(msg_buffer, msg.payload,
++			    msg.actual_payload_size);
++		}
++
++		if (msg.has_fd && msg.fd != -1)
++			ibuf_fd_set(msg_buffer, msg.fd);
++
++		io_close_buffer(target_msgbuf, msg_buffer);
++	}
++
++	for (uint8_t i = 0; i < 4; i++) {
++		int temp = 4;
++		struct msg_data eom_msg;
++		if (msg_generate_eom(&iface, i, &eom_msg) != MSG_GEN_SUCCESS)
++			continue;
++		struct msgbuf *target = (struct msgbuf *)eom_msg.endpoint;
++		if (target == NULL)
++			continue;
++		struct ibuf *eom_buffer = io_new_buffer();
++		io_simple_buffer(eom_buffer, &eom_msg.type, sizeof(eom_msg.type));
++		if (i == 0 || i == 3)
++			io_simple_buffer(eom_buffer, &temp, sizeof(int));
++		io_close_buffer(target, eom_buffer);
++	}
++
++	msgbuf_write(other_end[0], parser_msgbuf);
++	msgbuf_write(other_end[1], rsync_msgbuf);
++	msgbuf_write(other_end[2], http_msgbuf);
++	msgbuf_write(other_end[3], rrdp_msgbuf);
++
++	msgbuf_free(parser_msgbuf);
++	msgbuf_free(rsync_msgbuf);
++	msgbuf_free(http_msgbuf);
++	msgbuf_free(rrdp_msgbuf);
++
+ 	while (entity_queue > 0 && !killme) {
+ 		int polltim;
+ 
+@@ -1359,6 +1471,14 @@
+ 				int ok;
+ 
+ 				io_read_buf(b, &id, sizeof(id));
++
++				/* Check if this is an EOM message */
++				if (id == MSG_EOM) {
++					eom_counter_inc();
++					ibuf_free(b);
++					continue;
++				}
++
+ 				io_read_buf(b, &ok, sizeof(ok));
+ 				rsync_finish(id, ok);
+ 				ibuf_free(b);
+@@ -1378,6 +1498,14 @@
+ 				char *last_mod;
+ 
+ 				io_read_buf(b, &id, sizeof(id));
++
++				/* Check if this is an EOM message */
++				if (id == MSG_EOM) {
++					eom_counter_inc();
++					ibuf_free(b);
++					continue;
++				}
++
+ 				io_read_buf(b, &res, sizeof(res));
+ 				io_read_str(b, &last_mod);
+ 				http_finish(id, res, last_mod);
+@@ -1392,7 +1520,6 @@
+ 		if ((pfd[3].revents & POLLIN)) {
+ 			switch (ibuf_read(pfd[3].fd, queues[3])) {
+ 			case -1:
+-				abort();
+ 				err(1, "ibuf_read");
+ 			case 0:
+ 				errx(1, "ibuf_read: connection closed");

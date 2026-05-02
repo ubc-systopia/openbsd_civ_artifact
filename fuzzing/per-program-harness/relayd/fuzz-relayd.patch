@@ -1,0 +1,281 @@
+--- a/usr.sbin/relayd/Makefile	2026-05-02 00:06:16.958114000 -0700
++++ b/usr.sbin/relayd/Makefile	2026-05-02 00:00:52.077720000 -0700
+@@ -51,6 +51,29 @@
+ CFLAGS+=	-Wmissing-declarations
+ CFLAGS+=	-Wshadow -Wpointer-arith
+ CFLAGS+=	-Wsign-compare -Wcast-qual
++CFLAGS+=	-g -O0
+ YFLAGS=
++
++# BEGIN harness
++# Pull in libmsg_generator.a (structured stdin input) and libbuffer_check.so
++# (runtime pointer-leak detector) from ptr_checker.  BUFFER_CHECKER_ROOT must
++# point at the built ptr_checker directory.  -fsanitize-recover=memory keeps
++# MSan from aborting on the first uninit hit so AFL can keep making progress.
++#
++# Upstream relayd privsep is fork(2)+execvp(2) across four compartments
++# (PFE/HCE/RELAY/CA), so libbuffer_check.so is meaningful here: pointer-shaped
++# values the parent emits over the imsg sockets would be invalid in the
++# child's address space in production.  For the sanity check / productive AFL
++# pass, build ptr_checker with ENABLE_PTR_CHECK=0 so check_buffer() is a no-op
++# interceptor.  For the cross-compartment leak inspection pass, rebuild with
++# ENABLE_PTR_CHECK=1; relayd's startup config-distribution (e.g.
++# proc_compose_imsg(IMSG_CTL_PROCFD, ...)) will trip the detector on every
++# test case — see README.md for the inspection-pass workflow.
++BUFFER_CHECKER_ROOT?=	${.CURDIR}/../../../ptr_checker
++CFLAGS+=		-I${BUFFER_CHECKER_ROOT}
++CFLAGS+=		-fsanitize-recover=memory
++LDADD+=			${BUFFER_CHECKER_ROOT}/libmsg_generator.a
++LDADD+=			-L${BUFFER_CHECKER_ROOT} -lbuffer_check
++# END harness
+ 
+ .include <bsd.prog.mk>
+--- a/usr.sbin/relayd/proc.c	2026-05-02 00:06:16.960027000 -0700
++++ b/usr.sbin/relayd/proc.c	2026-05-01 22:01:58.184139000 -0700
+@@ -21,6 +21,7 @@
+ #include <sys/queue.h>
+ #include <sys/socket.h>
+ #include <sys/wait.h>
++#include <sys/procctl.h>
+ 
+ #include <fcntl.h>
+ #include <stdio.h>
+@@ -110,13 +111,31 @@
+ 			snprintf(num, sizeof(num), "%u", i);
+ 
+ 			fd = ps->ps_pipes[p->p_id][i].pp_pipes[PROC_PARENT][0];
+-			ps->ps_pipes[p->p_id][i].pp_pipes[PROC_PARENT][0] = -1;
++			// ps->ps_pipes[p->p_id][i].pp_pipes[PROC_PARENT][0] = -1;
+ 
++			if (p->p_id == PROC_PFE)
++				continue;
++
++			/*
++			 * Harness: do not fork the children.  All four
++			 * compartments end up running inline in the parent;
++			 * fd is left wired to the parent's end of the socket
++			 * pair so the harness can drive the child's receive
++			 * end from stdin via the message generator.
++			 */
++#if 0
+ 			switch (fork()) {
+ 			case -1:
+ 				fatal("%s: fork", __func__);
+ 				break;
+ 			case 0:
++				/* Set up child to exit if parent dies */
++				{
++					int sig = SIGTERM;
++					if (procctl(P_PID, 0, PROC_PDEATHSIG_CTL, &sig) == -1)
++						fatal("procctl PROC_PDEATHSIG_CTL");
++				}
++				
+ 				/* Prepare parent socket. */
+ 				if (fd != PROC_PARENT_SOCK_FILENO) {
+ 					if (dup2(fd, PROC_PARENT_SOCK_FILENO)
+@@ -133,6 +152,7 @@
+ 				close(fd);
+ 				break;
+ 			}
++#endif
+ 		}
+ 	}
+ 	free(nargv);
+@@ -191,8 +211,14 @@
+ 		privsep_process = PROC_PARENT;
+ 		proc_setup(ps, procs, nproc);
+ 
++		/*
++		 * Harness: do not daemonize.  Keep the parent in the
++		 * foreground so AFL can read its exit code.
++		 *
+ 		if (!debug && daemon(1, 0) == -1)
+ 			fatal("failed to daemonize");
++		*/
++		(void)debug;
+ 
+ 		/*
+ 		 * Create the children sockets so we can use them
+@@ -655,6 +681,10 @@
+ 		case IMSG_CTL_PROCFD:
+ 			IMSG_SIZE_CHECK(&imsg, &pf);
+ 			memcpy(&pf, imsg.data, sizeof(pf));
++			if (pf.pf_procid < 0 || pf.pf_procid > 4)
++				break;
++			if (pf.pf_instance != 0)
++				break;
+ 			proc_accept(ps, imsg.fd, pf.pf_procid,
+ 			    pf.pf_instance);
+ 			break;
+--- a/usr.sbin/relayd/relayd.c	2026-05-02 00:06:16.960914000 -0700
++++ b/usr.sbin/relayd/relayd.c	2026-05-01 21:25:16.704503000 -0700
+@@ -56,7 +56,10 @@
+ #include <tls.h>
+ 
+ #include "relayd.h"
++#include <msg_generator.h>
+ 
++void	eom_counter_init(int expected_eom);
++
+ #define MAXIMUM(a, b)	(((a) > (b)) ? (a) : (b))
+ 
+ __dead void	 usage(void);
+@@ -261,6 +264,7 @@
+ #endif
+ 	event_init();
+ 
++	/*
+ 	signal_set(&ps->ps_evsigint, SIGINT, parent_sig_handler, ps);
+ 	signal_set(&ps->ps_evsigterm, SIGTERM, parent_sig_handler, ps);
+ 	signal_set(&ps->ps_evsighup, SIGHUP, parent_sig_handler, ps);
+@@ -272,6 +276,7 @@
+ 	signal_add(&ps->ps_evsighup, NULL);
+ 	signal_add(&ps->ps_evsigpipe, NULL);
+ 	signal_add(&ps->ps_evsigusr1, NULL);
++	*/
+ 
+ 	proc_connect(ps);
+ 
+@@ -296,6 +301,68 @@
+ 	init_routes(env);
+ #endif
+ 
++	struct imsgbuf pfe_ibuf;
++	int pfe_fd = ps->ps_pipes[PROC_PFE][0].pp_pipes[PROC_PARENT][0];
++	imsg_init(&pfe_ibuf, pfe_fd);
++
++	struct imsgbuf hce_ibuf;
++	int hce_fd = ps->ps_pipes[PROC_HCE][0].pp_pipes[PROC_PARENT][0];
++	imsg_init(&hce_ibuf, hce_fd);
++
++	struct imsgbuf relay_ibuf;
++	int relay_fd = ps->ps_pipes[PROC_RELAY][0].pp_pipes[PROC_PARENT][0];
++	imsg_init(&relay_ibuf, relay_fd);
++
++	struct imsgbuf ca_ibuf;
++	int ca_fd = ps->ps_pipes[PROC_CA][0].pp_pipes[PROC_PARENT][0];
++	imsg_init(&ca_ibuf, ca_fd);
++
++	/*
++	 * Fuzzing harness: drive the four compartments (HCE, RELAY, PFE, CA)
++	 * from stdin via the message generator.  Each fuzzer message routes
++	 * to one compartment's imsgbuf based on msg.compartment.  After
++	 * stdin is exhausted we emit one IMSG_END_OF_MSGS per compartment;
++	 * each receiver dispatches it to eom_counter_inc(), which exit(0)s
++	 * once all four compartments have acknowledged.
++	 */
++	eom_counter_init(4);
++
++	struct msg_interface iface;
++	if (msg_interface_init(&iface, STDIN_FILENO, 4, 64) != MSG_GEN_SUCCESS)
++		errx(1, "msg_interface_init failed");
++
++	msg_interface_set_endpoint(&iface, 0, &hce_ibuf);
++	msg_interface_set_endpoint(&iface, 1, &relay_ibuf);
++	msg_interface_set_endpoint(&iface, 2, &pfe_ibuf);
++	msg_interface_set_endpoint(&iface, 3, &ca_ibuf);
++	msg_interface_set_eom_type(&iface, IMSG_END_OF_MSGS);
++
++	struct msg_data msg;
++	while (msg_generate(&iface, &msg) == MSG_GEN_SUCCESS) {
++		struct imsgbuf *target_ibuf = (struct imsgbuf *)msg.endpoint;
++		if (target_ibuf == NULL)
++			continue;
++
++		int fd = -1;
++		if (msg.has_fd && msg.fd != -1)
++			fd = msg.fd;
++
++		imsg_compose(target_ibuf, msg.type, 0, 0, fd,
++		    msg.payload, msg.actual_payload_size);
++		imsg_flush(target_ibuf);
++	}
++
++	for (uint8_t i = 0; i < 4; i++) {
++		struct msg_data eom_msg;
++		if (msg_generate_eom(&iface, i, &eom_msg) != MSG_GEN_SUCCESS)
++			continue;
++		struct imsgbuf *target = (struct imsgbuf *)eom_msg.endpoint;
++		if (target == NULL)
++			continue;
++		imsg_compose(target, IMSG_END_OF_MSGS, 0, 0, -1, NULL, 0);
++		imsg_flush(target);
++	}
++
+ 	event_dispatch();
+ 
+ 	parent_shutdown(env);
+@@ -474,6 +541,9 @@
+ 		agentx_setsock(env, p->p_id);
+ 		break;
+ #endif
++	case IMSG_END_OF_MSGS:
++		eom_counter_inc();
++		break;
+ 	default:
+ 		return (-1);
+ 	}
+@@ -498,6 +568,9 @@
+ 	case IMSG_CFG_DONE:
+ 		parent_configure_done(env);
+ 		break;
++	case IMSG_END_OF_MSGS:
++		eom_counter_inc();
++		break;
+ 	default:
+ 		return (-1);
+ 	}
+@@ -520,21 +593,25 @@
+ 		if (bnd.bnd_proc > env->sc_conf.prefork_relay)
+ 			fatalx("%s: invalid relay proc", __func__);
+ 		switch (bnd.bnd_proto) {
+-		case IPPROTO_TCP:
+-		case IPPROTO_UDP:
+-			break;
+-		default:
+-			fatalx("%s: requested socket "
+-			    "for invalid protocol", __func__);
+-			/* NOTREACHED */
++			case IPPROTO_TCP:
++			case IPPROTO_UDP:
++				break;
++			default:
++				fatalx("%s: requested socket "
++						"for invalid protocol", __func__);
++				/* NOTREACHED */
+ 		}
+ 		s = bindany(&bnd);
++		bnd.bnd_proc = 0;
+ 		proc_compose_imsg(ps, PROC_RELAY, bnd.bnd_proc,
+-		    IMSG_BINDANY, -1, s, &bnd.bnd_id, sizeof(bnd.bnd_id));
++				IMSG_BINDANY, -1, s, &bnd.bnd_id, sizeof(bnd.bnd_id));
+ 		break;
+ 	case IMSG_CFG_DONE:
+ 		parent_configure_done(env);
+ 		break;
++	case IMSG_END_OF_MSGS:
++		eom_counter_inc();
++		break;
+ 	default:
+ 		return (-1);
+ 	}
+@@ -551,6 +628,9 @@
+ 	switch (imsg->hdr.type) {
+ 	case IMSG_CFG_DONE:
+ 		parent_configure_done(env);
++		break;
++	case IMSG_END_OF_MSGS:
++		eom_counter_inc();
+ 		break;
+ 	default:
+ 		return (-1);
+--- a/usr.sbin/relayd/relayd.h	2026-05-02 00:06:16.961472000 -0700
++++ b/usr.sbin/relayd/relayd.h	2026-05-01 21:56:24.150427000 -0700
+@@ -1063,6 +1063,7 @@
+ 	IMSG_SESS_PUBLISH,	/* from relay to pfe */
+ 	IMSG_SESS_UNPUBLISH,
+ 	IMSG_TLSTICKET_REKEY,
++	IMSG_END_OF_MSGS,
+ };
+ 
+ enum privsep_procid {

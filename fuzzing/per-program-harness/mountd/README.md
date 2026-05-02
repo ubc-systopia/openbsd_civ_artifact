@@ -21,7 +21,7 @@ cd ..
 cd mountd-src/sbin/mountd
 
 export AFL_PATH=/path/to/AFLplusplus   # source dir, not install dir
-AFL_USE_ASAN=1 make CC=afl-clang-lto
+AFL_USE_ASAN=1 AFL_USE_UBSAN=1 make CC=afl-clang-lto
 
 # Sanity check: empty stdin should exit 0.
 touch /tmp/empty-exports
