@@ -1,6 +1,6 @@
-diff -ruN a/libimsg/src/lib/libutil/Makefile b/libimsg/src/lib/libutil/Makefile
---- a/libimsg/src/lib/libutil/Makefile	2026-05-01 15:07:57.813188000 -0700
-+++ b/libimsg/src/lib/libutil/Makefile	2025-10-29 23:01:40.664046000 -0700
+diff -ruN -x .git -x '*.orig' -x '*.rej' a/libimsg/src/lib/libutil/Makefile b/libimsg/src/lib/libutil/Makefile
+--- a/libimsg/src/lib/libutil/Makefile	2026-09-18 02:58:56.376251352 +0200
++++ b/libimsg/src/lib/libutil/Makefile	2026-09-18 02:58:56.388667786 +0200
 @@ -3,6 +3,7 @@
  LOCALBASE?=	/usr/local
  SHAREDIR?=	/usr/local
@@ -9,106 +9,18 @@ diff -ruN a/libimsg/src/lib/libutil/Makefile b/libimsg/src/lib/libutil/Makefile
  LIBDIR=		${LOCALBASE}/lib
  INCSDIR=	${LOCALBASE}/include
  CFLAGS+=	-Werror -Wstrict-prototypes -I${.CURDIR}
-diff -ruN a/src/usr.sbin/httpd/Makefile b/src/usr.sbin/httpd/Makefile
---- a/src/usr.sbin/httpd/Makefile	2026-05-01 15:07:56.229319000 -0700
-+++ b/src/usr.sbin/httpd/Makefile	2026-05-01 15:10:42.578067000 -0700
-@@ -16,17 +16,21 @@
- 
- MAN=		httpd.8 httpd.conf.5
- 
--LDADD=		../../../libevent/src/lib/libevent/libevent.a \
--		../../../libimsg/src/lib/libutil/libimsg.a
--LDADD+= 	/usr/local/lib/libtls.a \
--		/usr/local/lib/libssl.a \
--		/usr/local/lib/libcrypto.a
--LDADD+= 	-lcrypt -lprocstat -pthread
-+LDFLAGS+=	-L${.CURDIR}/../../../libimsg/src/lib/libutil -Wl,-rpath,${.CURDIR}/../../../libimsg/src/lib/libutil
-+LDFLAGS+=	-L${LOCALBASE}/lib -Wl,-rpath,${LOCALBASE}/lib
-+
-+LDADD=		${BUFFER_CHECKER_ROOT}/libmsg_generator.a
-+LDADD+=		../../../libevent/src/lib/libevent/libevent.a \
-+		../../../libimsg/src/lib/libutil/libimsg.so
-+LDADD+= 	-ltls \
-+		-lssl \
-+		-lcrypto
-+LDADD+= 	-lcrypt -lprocstat -pthread -lmd
-+LDADD+= 	-L${BUFFER_CHECKER_ROOT} -lbuffer_check
- SRCS+=		patterns.c
- MAN+=		patterns.7
- 
- DPADD=		${LIBTLS} ${LIBSSL} ${LIBCRYPTO}
--#DEBUG=		-g -DDEBUG=3 -O0
- CFLAGS+=	-Wall -I${.CURDIR}
- CFLAGS+=	-Wstrict-prototypes -Wmissing-prototypes
- CFLAGS+=	-Wmissing-declarations
-@@ -35,7 +38,9 @@
- CFLAGS+=	-I${.CURDIR}/../../../libevent/src/lib/libevent \
- 		-I${.CURDIR}/../../../libimsg/src/lib/libutil \
- 		-I${.CURDIR}/../../include \
--		-I${LOCALBASE}/include
-+		-I${LOCALBASE}/include \
-+		-I${BUFFER_CHECKER_ROOT}
-+CFLAGS+=	-fsanitize-recover=memory
- CFLAGS+=	-D__dead='' \
- 		-DHAVE_CONFIG_H
- CLEANFILES+=	y.tab.h
-diff -ruN a/src/usr.sbin/httpd/config.c b/src/usr.sbin/httpd/config.c
---- a/src/usr.sbin/httpd/config.c	2026-05-01 15:07:56.229433000 -0700
-+++ b/src/usr.sbin/httpd/config.c	2026-05-01 15:10:50.533371000 -0700
-@@ -158,6 +158,42 @@
- 	return (0);
- }
- 
-+
-+
-+static void
-+clear_config_server_ptrs(struct server_config *cfg)
-+{
-+    if (cfg == NULL)
-+        return;
-+
-+    cfg->default_type.media_encoding = NULL;
-+
-+    /* clear all fields expanded from RB_ENTRY */
-+    memset(&cfg->default_type.media_entry, 0, sizeof(cfg->default_type.media_entry));
-+
-+    cfg->tls_ca = NULL;
-+    cfg->tls_ca_file = NULL;
-+    cfg->tls_cert = NULL;
-+    cfg->tls_cert_file = NULL;
-+    cfg->tls_crl = NULL;
-+    cfg->tls_crl_file = NULL;
-+    cfg->tls_key = NULL;
-+    cfg->tls_key_file = NULL;
-+    cfg->tls_ocsp_staple = NULL;
-+    cfg->tls_ocsp_staple_file = NULL;
-+
-+    cfg->logaccess = NULL;
-+    cfg->logerror = NULL;
-+    cfg->auth = NULL;
-+    cfg->return_uri = NULL;
-+
-+    /* clear TAILQ_HEAD */
-+    memset(&cfg->fcgiparams, 0, sizeof(cfg->fcgiparams));
-+
-+    /* clear TAILQ_ENTRY */
-+    memset(&cfg->entry, 0, sizeof(cfg->entry));
-+}
-+
- int
- config_setserver(struct httpd *env, struct server *srv)
- {
-@@ -186,7 +222,9 @@
- 		    ps->ps_title[id], srv->srv_s);
+diff -ruN -x .git -x '*.orig' -x '*.rej' a/src/usr.sbin/httpd/config.c b/src/usr.sbin/httpd/config.c
+--- a/src/usr.sbin/httpd/config.c	2026-09-18 02:58:56.336245981 +0200
++++ b/src/usr.sbin/httpd/config.c	2026-09-18 02:58:56.388807028 +0200
+@@ -187,6 +187,7 @@
  
  		memcpy(&s, &srv->srv_conf, sizeof(s));
-+		clear_config_server_ptrs(&s);
  
 +
  		c = 0;
  		iov[c].iov_base = &s;
  		iov[c++].iov_len = sizeof(s);
-@@ -205,8 +243,10 @@
+@@ -205,8 +206,10 @@
  					fd = -1;
  				else if ((fd = dup(srv->srv_s)) == -1)
  					return (-1);
@@ -120,36 +32,9 @@ diff -ruN a/src/usr.sbin/httpd/config.c b/src/usr.sbin/httpd/config.c
  					log_warn("%s: failed to compose "
  					    "IMSG_CFG_SERVER imsg for `%s'",
  					    __func__, srv->srv_conf.name);
-@@ -828,6 +868,7 @@
- 		DPRINTF("%s: sending media \"%s\" to %s", __func__,
- 		    media->media_name, ps->ps_title[id]);
- 
-+		memset(&(media->media_entry), 0, sizeof(media->media_entry));
- 		proc_compose(ps, id, IMSG_CFG_MEDIA, media, sizeof(*media));
- 	}
- 
-@@ -865,6 +906,7 @@
- 	struct privsep		*ps = env->sc_ps;
- 	int			 id;
- 	unsigned int		 what;
-+	struct auth myauth;
- 
- 	for (id = 0; id < PROC_MAX; id++) {
- 		what = ps->ps_what[id];
-@@ -875,7 +917,9 @@
- 		DPRINTF("%s: sending auth \"%s[%u]\" to %s", __func__,
- 		    auth->auth_htpasswd, auth->auth_id, ps->ps_title[id]);
- 
--		proc_compose(ps, id, IMSG_CFG_AUTH, auth, sizeof(*auth));
-+		memcpy(&myauth, auth, sizeof(struct auth));
-+		memset(&myauth.auth_entry, 0, sizeof(myauth.auth_entry));
-+		proc_compose(ps, id, IMSG_CFG_AUTH, &myauth, sizeof(*auth));
- 	}
- 
- 	return (0);
-diff -ruN a/src/usr.sbin/httpd/httpd.c b/src/usr.sbin/httpd/httpd.c
---- a/src/usr.sbin/httpd/httpd.c	2026-05-01 15:07:56.229712000 -0700
-+++ b/src/usr.sbin/httpd/httpd.c	2026-05-01 15:13:14.131672000 -0700
+diff -ruN -x .git -x '*.orig' -x '*.rej' a/src/usr.sbin/httpd/httpd.c b/src/usr.sbin/httpd/httpd.c
+--- a/src/usr.sbin/httpd/httpd.c	2026-09-18 02:58:56.337245989 +0200
++++ b/src/usr.sbin/httpd/httpd.c	2026-09-18 02:58:56.388917265 +0200
 @@ -44,6 +44,7 @@
  
  #include "httpd.h"
@@ -225,15 +110,7 @@ diff -ruN a/src/usr.sbin/httpd/httpd.c b/src/usr.sbin/httpd/httpd.c
  	event_dispatch();
  
  	parent_shutdown(env);
-@@ -284,6 +338,7 @@
- 	struct media_type	*media;
- 	struct auth		*auth;
- 
-+	memset(&cf, 0, sizeof(cf));
- 	RB_FOREACH(media, mediatypes, env->sc_mediatypes) {
- 		if (config_setmedia(env, media) == -1)
- 			fatal("send media");
-@@ -420,6 +475,10 @@
+@@ -420,6 +474,10 @@
  	case IMSG_CFG_DONE:
  		parent_configure_done(env);
  		break;
@@ -244,19 +121,19 @@ diff -ruN a/src/usr.sbin/httpd/httpd.c b/src/usr.sbin/httpd/httpd.c
  	default:
  		return (-1);
  	}
-@@ -459,6 +518,9 @@
- 	case IMSG_LOG_OPEN:
+@@ -460,6 +518,9 @@
  		if (logger_open_priv(imsg) == -1)
  			fatalx("failed to open log file");
-+		break;
+ 		break;
 +	case IMSG_EOM:
 +		eom_counter_inc();
- 		break;
++		break;
  	default:
  		return (-1);
-diff -ruN a/src/usr.sbin/httpd/httpd.h b/src/usr.sbin/httpd/httpd.h
---- a/src/usr.sbin/httpd/httpd.h	2026-05-01 15:07:56.229987000 -0700
-+++ b/src/usr.sbin/httpd/httpd.h	2025-11-01 15:10:25.727981000 -0700
+ 	}
+diff -ruN -x .git -x '*.orig' -x '*.rej' a/src/usr.sbin/httpd/httpd.h b/src/usr.sbin/httpd/httpd.h
+--- a/src/usr.sbin/httpd/httpd.h	2026-09-18 02:58:56.337245989 +0200
++++ b/src/usr.sbin/httpd/httpd.h	2026-09-18 02:58:56.389012264 +0200
 @@ -222,7 +222,8 @@
  	IMSG_LOG_ACCESS,
  	IMSG_LOG_ERROR,
@@ -267,48 +144,52 @@ diff -ruN a/src/usr.sbin/httpd/httpd.h b/src/usr.sbin/httpd/httpd.h
  };
  
  enum privsep_procid {
-diff -ruN a/src/usr.sbin/httpd/logger.c b/src/usr.sbin/httpd/logger.c
---- a/src/usr.sbin/httpd/logger.c	2026-05-01 15:07:56.230122000 -0700
-+++ b/src/usr.sbin/httpd/logger.c	2025-10-22 21:57:49.292603000 -0700
-@@ -166,11 +166,16 @@
- 	size_t			 len;
- 	int			 fd;
+diff -ruN -x .git -x '*.orig' -x '*.rej' a/src/usr.sbin/httpd/Makefile b/src/usr.sbin/httpd/Makefile
+--- a/src/usr.sbin/httpd/Makefile	2026-09-18 02:58:56.336245981 +0200
++++ b/src/usr.sbin/httpd/Makefile	2026-09-18 02:58:56.388737327 +0200
+@@ -16,17 +16,21 @@
  
-+	// memset(name, 0, sizeof(name));
-+	memset(path, 0, sizeof(path));
- 	/* called from the privileged process */
- 	IMSG_SIZE_CHECK(imsg, &id);
-+	if (IMSG_DATA_SIZE(imsg) == sizeof(id))
-+		exit(-1);
- 	memcpy(&id, imsg->data, sizeof(id));
- 	p = (char *)imsg->data + sizeof(id);
+ MAN=		httpd.8 httpd.conf.5
  
-+	p[IMSG_DATA_SIZE(imsg) - sizeof(id) - 1] = '\0';
- 	if ((size_t)snprintf(name, sizeof(name), "/%s", p) >= sizeof(name))
- 		return (-1);
- 	if ((len = strlcpy(path, httpd_env->sc_logdir, sizeof(path)))
-diff -ruN a/src/usr.sbin/httpd/parse.y b/src/usr.sbin/httpd/parse.y
---- a/src/usr.sbin/httpd/parse.y	2026-05-01 15:07:56.230401000 -0700
-+++ b/src/usr.sbin/httpd/parse.y	2025-11-08 21:38:51.042486000 -0800
-@@ -1516,6 +1516,7 @@
+-LDADD=		../../../libevent/src/lib/libevent/libevent.a \
+-		../../../libimsg/src/lib/libutil/libimsg.a
+-LDADD+= 	/usr/local/lib/libtls.a \
+-		/usr/local/lib/libssl.a \
+-		/usr/local/lib/libcrypto.a
+-LDADD+= 	-lcrypt -lprocstat -pthread
++LDFLAGS+=	-L${.CURDIR}/../../../libimsg/src/lib/libutil -Wl,-rpath,${.CURDIR}/../../../libimsg/src/lib/libutil
++LDFLAGS+=	-L${LOCALBASE}/lib -Wl,-rpath,${LOCALBASE}/lib
++
++LDADD=		${BUFFER_CHECKER_ROOT}/libmsg_generator.a
++LDADD+=		../../../libevent/src/lib/libevent/libevent.a \
++		../../../libimsg/src/lib/libutil/libimsg.so
++LDADD+= 	-ltls \
++		-lssl \
++		-lcrypto
++LDADD+= 	-lcrypt -lprocstat -pthread -lmd
++LDADD+= 	-L${BUFFER_CHECKER_ROOT} -lbuffer_check
+ SRCS+=		patterns.c
+ MAN+=		patterns.7
  
- static int	expanding;
- 
-+__attribute__((no_sanitize("memory")))
- int
- igetc(void)
- {
-@@ -1900,6 +1901,7 @@
- 	struct media_type	 m;
- 	int			 i;
- 
-+	// memset(&m, 0, sizeof(m));
- 	conf = x_conf;
- 	conf->sc_flags = 0;
- 
-diff -ruN a/src/usr.sbin/httpd/proc.c b/src/usr.sbin/httpd/proc.c
---- a/src/usr.sbin/httpd/proc.c	2026-05-01 15:07:56.230551000 -0700
-+++ b/src/usr.sbin/httpd/proc.c	2026-05-01 15:12:22.036955000 -0700
+ DPADD=		${LIBTLS} ${LIBSSL} ${LIBCRYPTO}
+-#DEBUG=		-g -DDEBUG=3 -O0
+ CFLAGS+=	-Wall -I${.CURDIR}
+ CFLAGS+=	-Wstrict-prototypes -Wmissing-prototypes
+ CFLAGS+=	-Wmissing-declarations
+@@ -35,7 +39,9 @@
+ CFLAGS+=	-I${.CURDIR}/../../../libevent/src/lib/libevent \
+ 		-I${.CURDIR}/../../../libimsg/src/lib/libutil \
+ 		-I${.CURDIR}/../../include \
+-		-I${LOCALBASE}/include
++		-I${LOCALBASE}/include \
++		-I${BUFFER_CHECKER_ROOT}
++CFLAGS+=	-fsanitize-recover=memory
+ CFLAGS+=	-D__dead='' \
+ 		-DHAVE_CONFIG_H
+ CLEANFILES+=	y.tab.h
+diff -ruN -x .git -x '*.orig' -x '*.rej' a/src/usr.sbin/httpd/proc.c b/src/usr.sbin/httpd/proc.c
+--- a/src/usr.sbin/httpd/proc.c	2026-09-18 02:58:56.338245998 +0200
++++ b/src/usr.sbin/httpd/proc.c	2026-09-18 02:58:56.389282943 +0200
 @@ -111,8 +111,9 @@
  			snprintf(num, sizeof(num), "%u", i);
  

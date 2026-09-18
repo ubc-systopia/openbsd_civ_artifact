@@ -6,8 +6,11 @@ Place the `ptr_checker` directory next to this README and build it with the poin
 
 ```sh
 cd ptr_checker
-make ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=0
+make USE_IMSG=1 INTERCEPT_IMSG_COMPOSE=1 \
+    INTERCEPT_IMSG_COMPOSEV=1 ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=0
 export BUFFER_CHECKER_ROOT=$PWD
+export AFL_PRELOAD="${BUFFER_CHECKER_ROOT}/libbuffer_check.so"
+export LD_PRELOAD="$AFL_PRELOAD"
 export LD_LIBRARY_PATH="$BUFFER_CHECKER_ROOT"
 cd ..
 ```
@@ -39,6 +42,7 @@ make -C libimsg/src/lib/libutil
 make -C libevent/src/lib/libevent
 
 cd src/usr.sbin/httpd
+make
 ```
 
 Create `httpd.conf` in `src/usr.sbin/httpd/`:
@@ -81,7 +85,8 @@ Rebuild `ptr_checker` with the detector enabled and re-run the same binary.
 ```sh
 cd $BUFFER_CHECKER_ROOT
 make clean
-make ENABLE_PTR_CHECK=1 ENABLE_MSAN_CHECK=0
+make USE_IMSG=1 INTERCEPT_IMSG_COMPOSE=1 \
+    INTERCEPT_IMSG_COMPOSEV=1 ENABLE_PTR_CHECK=1 ENABLE_MSAN_CHECK=0
 export AFL_PRELOAD="${BUFFER_CHECKER_ROOT}/libbuffer_check.so"
 
 cd /PATH/TO/httpd/src/usr.sbin/httpd
@@ -95,7 +100,8 @@ The detector aborts on the first cross-compartment pointer it sees. This is an i
 ```sh
 cd $BUFFER_CHECKER_ROOT
 make clean
-make ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=0
+make USE_IMSG=1 INTERCEPT_IMSG_COMPOSE=1 \
+    INTERCEPT_IMSG_COMPOSEV=1 ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=0
 unset AFL_PRELOAD
 export MSAN_OPTIONS='handle_sigbus=0:exit_code=86:symbolize=0:exit_code=0'
 
