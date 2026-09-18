@@ -22,6 +22,7 @@ git checkout ae44cd74f3a4ac711152f50b2712803ccf785593
 
 # replace PATH/TO with the path to the respective file
 patch -p1 < PATH/TO/fuzz-sshd.patch
+patch -p0 < PATH/TO/openssh-known-pwnam-skip.patch
 tar -xvf PATH/TO/in.tar.gz
 mv PATH/TO/sshd-rexec-dump .
 
