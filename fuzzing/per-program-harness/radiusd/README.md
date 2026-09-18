@@ -4,6 +4,9 @@ This directory fuzzes the two root helper receivers.  The generic `radiusd`
 main process is not a target: it drops to `_radiusd` and is not the most
 privileged compartment.  Run the BSDAUTH and file helpers separately.
 
+Copy the `ptr_checker` directory next to this README before building either
+helper.
+
 ## Root BSDAUTH helper
 
 This target exercises only the root `radiusd_bsdauth` receiver.  It retains
@@ -17,7 +20,8 @@ ASan/UBSan plus pointer checking:
 mkdir -p seeds-bsdauth
 cp seeds/seed seeds-bsdauth/seed
 make -C ptr_checker clean
-make -C ptr_checker ENABLE_PTR_CHECK=1 ENABLE_MSAN_CHECK=0
+make -C ptr_checker INTERCEPT_SENDMSG=0 INTERCEPT_IMSG_COMPOSE=1 \
+    INTERCEPT_IMSG_COMPOSEV=1 ENABLE_PTR_CHECK=1 ENABLE_MSAN_CHECK=0
 make HELPER=bsdauth clean
 AFL_USE_ASAN=1 AFL_USE_UBSAN=1 make HELPER=bsdauth \
     CC=/usr/local/afl++-llvm/bin/afl-clang-lto
@@ -32,7 +36,8 @@ MSan:
 
 ```sh
 make -C ptr_checker clean
-make -C ptr_checker ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=1
+make -C ptr_checker INTERCEPT_SENDMSG=0 INTERCEPT_IMSG_COMPOSE=1 \
+    INTERCEPT_IMSG_COMPOSEV=1 ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=1
 make HELPER=bsdauth clean
 AFL_USE_MSAN=1 make HELPER=bsdauth CHECKS=msan \
     CC=/usr/local/afl++-llvm/bin/afl-clang-lto
@@ -60,7 +65,8 @@ cc -Wall -Wextra -o generate-file-seed generate_file_seed.c
 mkdir -p seeds-file
 ./generate-file-seed > seeds-file/seed
 make -C ptr_checker clean
-make -C ptr_checker ENABLE_PTR_CHECK=1 ENABLE_MSAN_CHECK=0
+make -C ptr_checker INTERCEPT_SENDMSG=0 INTERCEPT_IMSG_COMPOSE=1 \
+    INTERCEPT_IMSG_COMPOSEV=1 ENABLE_PTR_CHECK=1 ENABLE_MSAN_CHECK=0
 make HELPER=file clean
 AFL_USE_ASAN=1 AFL_USE_UBSAN=1 make HELPER=file \
     CC=/usr/local/afl++-llvm/bin/afl-clang-lto
@@ -75,7 +81,8 @@ MSan:
 
 ```sh
 make -C ptr_checker clean
-make -C ptr_checker ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=1
+make -C ptr_checker INTERCEPT_SENDMSG=0 INTERCEPT_IMSG_COMPOSE=1 \
+    INTERCEPT_IMSG_COMPOSEV=1 ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=1
 make HELPER=file clean
 AFL_USE_MSAN=1 make HELPER=file CHECKS=msan \
     CC=/usr/local/afl++-llvm/bin/afl-clang-lto

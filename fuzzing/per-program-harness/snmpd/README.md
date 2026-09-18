@@ -1,13 +1,16 @@
 # snmpd privileged-compartment harness
 
 
+Copy the `ptr_checker` directory next to this README before building.
+
 Create a seed if needed, then run ASan/UBSan plus pointer checking on FreeBSD:
 
 ```sh
 mkdir -p seeds
 test -f seeds/seed || dd if=/dev/urandom of=seeds/seed bs=512 count=4
 make -C ptr_checker clean
-make -C ptr_checker ENABLE_PTR_CHECK=1 ENABLE_MSAN_CHECK=0
+make -C ptr_checker INTERCEPT_SENDMSG=0 INTERCEPT_IMSG_COMPOSE=1 \
+    INTERCEPT_IMSG_COMPOSEV=1 ENABLE_PTR_CHECK=1 ENABLE_MSAN_CHECK=0
 make clean
 AFL_USE_ASAN=1 AFL_USE_UBSAN=1 make CC=/usr/local/afl++-llvm/bin/afl-clang-lto
 export LD_LIBRARY_PATH="$PWD:$PWD/ptr_checker"
@@ -20,7 +23,8 @@ MSan:
 
 ```sh
 make -C ptr_checker clean
-make -C ptr_checker ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=1
+make -C ptr_checker INTERCEPT_SENDMSG=0 INTERCEPT_IMSG_COMPOSE=1 \
+    INTERCEPT_IMSG_COMPOSEV=1 ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=1
 make clean
 AFL_USE_MSAN=1 make CHECKS=msan CC=/usr/local/afl++-llvm/bin/afl-clang-lto
 export LD_LIBRARY_PATH="$PWD:$PWD/ptr_checker"
