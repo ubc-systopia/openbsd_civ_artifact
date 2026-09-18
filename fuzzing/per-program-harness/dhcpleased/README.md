@@ -1,14 +1,6 @@
 # dhcpleased privileged-compartment harness
 
-This directory fuzzes the original `dhcpleased` parent dispatcher through two
-synthetic imsg endpoints representing the unprivileged frontend and engine.
-The guarded harness remains in the original `main()` and preserves the
-parent-to-child setup messages.  Vendored imsg is built as `libprivimsg.so` so
-the checker can dynamically intercept `imsg_compose()` and `imsg_composev()`.
-The generator covers the complete `enum imsg_type` range and one value beyond
-that range; the privileged dispatchers decide which messages they accept.
-
-On FreeBSD, build and fuzz the ASan/UBSan plus pointer-checking configuration:
+ASan/UBSan plus pointer-checking configuration:
 
 ```sh
 make -C ptr_checker clean
@@ -21,7 +13,7 @@ export ASAN_OPTIONS=verify_asan_link_order=0:abort_on_error=1:symbolize=0:detect
 afl-fuzz -i seeds -o findings-asan -- ./dhcpleased-priv-harness
 ```
 
-Build and fuzz with MSan in the artifact's documented recover mode:
+MSan configuration:
 
 ```sh
 make -C ptr_checker clean
