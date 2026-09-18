@@ -6,9 +6,14 @@ Place the `ptr_checker` directory next to this README and build it with the poin
 
 ```sh
 cd ptr_checker
-make ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=0
+make USE_IMSG=1 INTERCEPT_IMSG_COMPOSE=1 \
+    INTERCEPT_IMSG_COMPOSEV=1 ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=0
 export BUFFER_CHECKER_ROOT=$PWD
+export AFL_PRELOAD="${BUFFER_CHECKER_ROOT}/libbuffer_check.so"
+export LD_PRELOAD="$AFL_PRELOAD"
 export LD_LIBRARY_PATH="$BUFFER_CHECKER_ROOT"
+export ASAN_OPTIONS='verify_asan_link_order=0:abort_on_error=1:symbolize=0'
+export LD_LIBRARY_PATH="$(clang19 -print-runtime-dir):$LD_LIBRARY_PATH"
 cd ..
 ```
 
@@ -37,7 +42,8 @@ patch -p1 < /PATH/TO/fuzz-rpki-client.patch
 
 autoreconf -fi
 
-./configure CPPFLAGS=-I/usr/local/include LDFLAGS=-L/usr/local/lib
+./configure CPPFLAGS=-I/usr/local/include \
+    LDFLAGS="-L/usr/local/lib -lexecinfo"
 ```
 
 `update.sh.patch` pins the openbsd source commit before `update.sh` runs. `autogen.sh` clones `rpki-client-openbsd` at the pinned commit, copies sources into `./src`, and applies upstream portability patches; the harness patch is applied on top, then `autoreconf -fi` regenerates `Makefile.in`.
@@ -57,13 +63,13 @@ AFL_USE_ASAN=1 AFL_USE_UBSAN=1 BUFFER_CHECKER_ROOT=$BUFFER_CHECKER_ROOT \
 
 # Sanity check: empty stdin should exit 0 after dispatching four EOMs.
 mkdir -p /tmp/rpki-cache /tmp/rpki-out
-printf '' | ./src/rpki-client -d /tmp/rpki-cache /tmp/rpki-out
+printf '' | ./src/.libs/rpki-client -d /tmp/rpki-cache /tmp/rpki-out
 
 mkdir -p seeds out_asan
 dd if=/dev/urandom of=seeds/seed bs=512 count=8
 
 afl-fuzz -i seeds -o out_asan -m none \
-    -- ./src/rpki-client -d /tmp/rpki-cache /tmp/rpki-out
+    -- ./src/.libs/rpki-client -d /tmp/rpki-cache /tmp/rpki-out
 ```
 
 `AFL_PATH` must point at the AFL++ source/build directory (the one that contains `afl-compiler-rt.o`). `AUTOMAKE=true …=true` suppresses autotools regeneration mid-build.
@@ -73,11 +79,12 @@ afl-fuzz -i seeds -o out_asan -m none \
 ```sh
 cd $BUFFER_CHECKER_ROOT
 make clean
-make ENABLE_PTR_CHECK=1 ENABLE_MSAN_CHECK=0
+make USE_IMSG=1 INTERCEPT_IMSG_COMPOSE=1 \
+    INTERCEPT_IMSG_COMPOSEV=1 ENABLE_PTR_CHECK=1 ENABLE_MSAN_CHECK=0
 export AFL_PRELOAD="${BUFFER_CHECKER_ROOT}/libbuffer_check.so"
 
 cd /PATH/TO/rpki-client-portable
-./src/rpki-client -d /tmp/rpki-cache /tmp/rpki-out </dev/null
+./src/.libs/rpki-client -d /tmp/rpki-cache /tmp/rpki-out </dev/null
 ```
 
 Aborts on the first imsg payload byte that lands inside a mapped code/data region. Inspection pass only.
@@ -87,7 +94,8 @@ Aborts on the first imsg payload byte that lands inside a mapped code/data regio
 ```sh
 cd $BUFFER_CHECKER_ROOT
 make clean
-make ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=1
+make USE_IMSG=1 INTERCEPT_IMSG_COMPOSE=1 \
+    INTERCEPT_IMSG_COMPOSEV=1 ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=1
 export MSAN_OPTIONS='handle_sigbus=0:exit_code=86:symbolize=0:exit_code=0'
 
 cd /PATH/TO/rpki-client-portable
@@ -100,5 +108,5 @@ AFL_USE_MSAN=1 BUFFER_CHECKER_ROOT=$BUFFER_CHECKER_ROOT \
     make CC=afl-clang-lto
 
 afl-fuzz -i seeds -o out_msan -m none \
-    -- ./src/rpki-client -d /tmp/rpki-cache /tmp/rpki-out
+    -- ./src/.libs/rpki-client -d /tmp/rpki-cache /tmp/rpki-out
 ```
