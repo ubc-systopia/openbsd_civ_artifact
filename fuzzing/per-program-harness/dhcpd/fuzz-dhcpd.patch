@@ -1,11 +1,13 @@
---- a/src/usr.sbin/dhcpd/Makefile	2026-05-01 22:19:13.704024000 -0700
-+++ b/src/usr.sbin/dhcpd/Makefile	2026-05-01 22:08:19.787471000 -0700
-@@ -10,9 +10,11 @@
+--- a/src/usr.sbin/dhcpd/Makefile
++++ b/src/usr.sbin/dhcpd/Makefile
+@@ -10,9 +10,13 @@ PROG=	dhcpd
  MAN=	dhcpd.8 dhcpd.conf.5 dhcpd.leases.5 dhcp-options.5
  
  LDADD+=-lcrypto -lmd
 -CFLAGS+=-Wall -D__dead=''
 +LDADD+=${BUFFER_CHECKER_ROOT}/libmsg_generator.a
++LDADD+=-L${BUFFER_CHECKER_ROOT} -lbuffer_check
++LDFLAGS+=-Wl,-rpath,${BUFFER_CHECKER_ROOT}
 +CFLAGS+=-Wall -D__dead='' -I${BUFFER_CHECKER_ROOT}
 +CFLAGS+=-fsanitize-recover=memory
  
@@ -14,8 +16,8 @@
 +CFLAGS+=-Wstrict-prototypes -Wmissing-prototypes -O0 -g
  CFLAGS+=-Wmissing-declarations
  CFLAGS+=-Wshadow -Wpointer-arith -Wcast-qual
---- a/src/usr.sbin/dhcpd/dhcpd.c	2026-05-01 22:19:13.705791000 -0700
-+++ b/src/usr.sbin/dhcpd/dhcpd.c	2026-05-01 22:07:03.995463000 -0700
+--- a/src/usr.sbin/dhcpd/dhcpd.c
++++ b/src/usr.sbin/dhcpd/dhcpd.c
 @@ -61,6 +61,7 @@
  #include "dhcpd.h"
  #include "log.h"
@@ -24,7 +26,7 @@
  
  
  __dead void usage(void);
-@@ -223,7 +224,7 @@
+@@ -223,7 +224,7 @@ main(int argc, char *argv[])
  	if ((pw = getpwnam("_dhcp")) == NULL)
  		fatalx("user \"_dhcp\" not found");
  
@@ -33,7 +35,7 @@
  	/* don't go near /dev/pf unless we actually intend to use it */
  	if ((abandoned_tab != NULL) ||
  	    (changedmac_tab != NULL) ||
-@@ -247,7 +248,50 @@
+@@ -247,7 +248,50 @@ main(int argc, char *argv[])
  			break;
  		}
  	}
@@ -85,8 +87,8 @@
  
  	if (udpsockmode)
  		udpsock_startup(udpaddr);
---- a/src/usr.sbin/dhcpd/pfutils.c	2026-05-01 22:19:13.706954000 -0700
-+++ b/src/usr.sbin/dhcpd/pfutils.c	2026-05-01 22:07:54.094452000 -0700
+--- a/src/usr.sbin/dhcpd/pfutils.c
++++ b/src/usr.sbin/dhcpd/pfutils.c
 @@ -40,6 +40,8 @@
  #include "dhcpd.h"
  #include "log.h"
@@ -96,7 +98,7 @@
  extern struct passwd *pw;
  extern int pfpipe[2];
  extern int gotpipe;
-@@ -54,18 +56,22 @@
+@@ -54,18 +56,22 @@ pftable_handler()
  	struct pollfd pfd[1];
  	int l, r, fd, nfds;
  
@@ -120,15 +122,15 @@
  
  	/* no filesystem visibility */
  #ifdef __OpenBSD__
-@@ -134,6 +140,11 @@
- 				 * further action is required.
+@@ -135,6 +141,11 @@ pftable_handler()
  				 */
  				pf_change_table(fd, 0, cmd.ip, leased_tab);
-+				break;
+ 				break;
 +			case 'G':
 +				/* FUZZ: libmsg_generator EOM hook; library exits
 +				 * once every compartment has dispatched its EOM. */
 +				eom_counter_inc();
- 				break;
++				break;
  			default:
  				break;
+ 			}
