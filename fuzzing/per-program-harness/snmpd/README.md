@@ -1,11 +1,5 @@
 # snmpd privileged-compartment harness
 
-This directory fuzzes the original privileged `snmpd` parent dispatcher under
-the `SNMPD_PRIV_ONLY` guard.  Its vendored imsg implementation is built as
-`libprivimsg.so`, making outbound compose operations dynamically visible to the
-checker.  The generator covers every production imsg type and one invalid
-type.  Trap payload parsing is excluded because production performs it only
-in a forked child after dropping privileges to `_snmpd`.
 
 Create a seed if needed, then run ASan/UBSan plus pointer checking on FreeBSD:
 
