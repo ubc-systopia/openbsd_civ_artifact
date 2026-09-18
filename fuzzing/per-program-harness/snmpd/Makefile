@@ -1,0 +1,52 @@
+#	$OpenBSD: Makefile,v 1.27 2025/12/24 13:36:38 martijn Exp $
+
+CC ?= cc
+YACC ?= yacc
+BUFFER_CHECKER_ROOT ?= ${.CURDIR}/ptr_checker
+
+PROG=	snmpd-priv-harness
+SRCS=	mib.c log.c smi.c snmpd.c proc.c traphandler.c \
+	lib/libutil/ber.c
+OBJS=	$(SRCS:.c=.o)
+IMSG_OBJS= lib/libutil/imsg.pic.o lib/libutil/imsg-buffer.pic.o
+IMSG_LIB= libprivimsg.so
+
+CFLAGS+= -Wall -I${.CURDIR} -Icompat -Ilib/libutil \
+	-I${BUFFER_CHECKER_ROOT} -I/usr/local/include
+CFLAGS+= -include compat/openbsd-compat.h
+CFLAGS+= -DSNMPD_PRIV_ONLY
+CFLAGS+= -Wextra -Wstrict-prototypes -Wmissing-prototypes
+CFLAGS+= -Wmissing-declarations -Wpointer-arith -Wcast-qual
+CFLAGS+= -Wsign-compare -g
+LDFLAGS+= -L/usr/local/lib -L${BUFFER_CHECKER_ROOT} -L${.CURDIR}
+LDFLAGS+= -Wl,-rpath,'$$ORIGIN' -Wl,-rpath,'$$ORIGIN/ptr_checker'
+LDADD+=	${BUFFER_CHECKER_ROOT}/libmsg_generator.a
+LDADD+=	-lbuffer_check -lprivimsg -levent -lprocstat -lmd -lutil -lcrypto -lexecinfo
+
+CHECKS ?= none
+.if "$(CHECKS)" == "msan"
+CFLAGS+= -fsanitize=memory -fsanitize-recover=memory
+LDFLAGS+= -fsanitize=memory
+.endif
+
+all: $(IMSG_LIB) $(PROG)
+
+lib/libutil/imsg.pic.o: lib/libutil/imsg.c
+	$(CC) $(CFLAGS) -fPIC -c -o $@ lib/libutil/imsg.c
+
+lib/libutil/imsg-buffer.pic.o: lib/libutil/imsg-buffer.c
+	$(CC) $(CFLAGS) -fPIC -c -o $@ lib/libutil/imsg-buffer.c
+
+$(IMSG_LIB): $(IMSG_OBJS)
+	$(CC) $(LDFLAGS) -shared -o $@ $(IMSG_OBJS)
+
+mib.c: mib.y
+	$(YACC) -pmib -o ${.TARGET} ${.IMPSRC}
+
+$(PROG): $(OBJS) $(IMSG_LIB)
+	$(CC) $(LDFLAGS) -o $@ $(OBJS) $(LDADD)
+
+clean:
+	rm -f $(PROG) $(OBJS) $(IMSG_OBJS) $(IMSG_LIB) mib.c y.tab.h
+
+.PHONY: all clean
