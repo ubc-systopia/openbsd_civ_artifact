@@ -1,17 +1,5 @@
 # acme-client fileproc harness
 
-This artifact fuzzes `acme-client`'s privileged `fileproc` compartment.  The
-compile-time harness feeds the real `fileproc()` dispatcher through its native
-socket protocol. The generator uses the complete contiguous `enum fileop`
-range: `FILE_STOP`, `FILE_REMOVE`, and `FILE_CREATE`, followed by the invalid
-sentinel `FILE__MAX`.
-
-`fileproc` does not send IPC messages back to another compartment.  Its
-`write(2)` calls write certificate files, so this harness deliberately builds
-the checker with every outbound interceptor disabled.  The checker is retained
-for configuration consistency and the shared message generator; the harness
-does not call `check_buffer()` or `ptr_check_skip()`.
-
 Build and run the ASan/UBSan plus pointer-checking configuration on FreeBSD:
 
 ```sh
