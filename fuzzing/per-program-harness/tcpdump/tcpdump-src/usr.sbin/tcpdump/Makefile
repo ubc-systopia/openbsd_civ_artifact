@@ -78,6 +78,11 @@ LDADD += -lthr -lbuffer_check
 
 CFLAGS += -O0 -g3 -fno-omit-frame-pointer
 
+# Keep sanitizer interceptors in a shared object so LD_PRELOAD can interpose
+# write(2) before forwarding to the sanitizer implementation with RTLD_NEXT.
+CFLAGS += -shared-libasan
+LDFLAGS += -shared-libasan
+
 AWKS = atime.awk packetdat.awk send-ack.awk stime.awk
 
 .include <bsd.prog.mk>

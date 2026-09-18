@@ -8,9 +8,12 @@ Place the `ptr_checker` directory next to this README, then build it with the po
 
 ```sh
 cd ptr_checker
-make ENABLE_PTR_CHECK=1 ENABLE_MSAN_CHECK=0
+make USE_IMSG=0 INTERCEPT_WRITE=1 \
+    ENABLE_PTR_CHECK=1 ENABLE_MSAN_CHECK=0
 export BUFFER_CHECKER_ROOT=$PWD
 export AFL_PRELOAD="${BUFFER_CHECKER_ROOT}/libbuffer_check.so"
+export ASAN_OPTIONS='verify_asan_link_order=0:abort_on_error=1:symbolize=0'
+export LD_LIBRARY_PATH="$(clang19 -print-runtime-dir)${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 cd ..
 ```
 
@@ -41,13 +44,17 @@ afl-fuzz -i seeds -o out -m none \
 ```
 
 `AFL_PATH` must point at the AFL++ source/build directory (the one that contains `afl-compiler-rt.o`). The `-P` flag tells `tcpdump` to enter the privileged-side path (`priv_exec`) directly.
+The shared ASan runtime and `verify_asan_link_order=0` are required because the
+checker must be first in `LD_PRELOAD`; its `write(2)` wrapper then forwards to
+ASan with `RTLD_NEXT`.
 
 ## 3. Fuzz with MSan
 
 ```sh
 cd $BUFFER_CHECKER_ROOT
 make clean
-make ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=1
+make USE_IMSG=0 INTERCEPT_WRITE=1 \
+    ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=1
 export MSAN_OPTIONS='handle_sigbus=0:exit_code=86:symbolize=0:exit_code=0'
 
 cd /PATH/TO/tcpdump-src/usr.sbin/tcpdump
