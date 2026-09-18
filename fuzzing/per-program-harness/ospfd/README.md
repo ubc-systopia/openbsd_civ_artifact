@@ -1,13 +1,5 @@
 # ospfd privileged-compartment harness
 
-This directory fuzzes the original privileged `ospfd` parent handlers using
-synthetic imsg traffic from the unprivileged compartments.  The harness is
-guarded by `OSPFD_PRIV_ONLY`; vendored imsg remains dynamically interposable.
-The generator covers the complete `enum imsg_type` range and one value beyond
-that range; the privileged parent decides which messages each peer may send.
-Sanitizer terminations are findings and must be triaged against OpenBSD rather
-than patched merely to keep AFL running.
-
 ASan/UBSan plus pointer checking on FreeBSD:
 
 ```sh
