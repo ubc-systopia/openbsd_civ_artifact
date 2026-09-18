@@ -6,8 +6,11 @@ Place the `ptr_checker` directory next to this README and build it with the poin
 
 ```sh
 cd ptr_checker
-make ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=0
+make USE_IMSG=1 INTERCEPT_IMSG_COMPOSE=1 \
+    INTERCEPT_IMSG_COMPOSEV=1 ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=0
 export BUFFER_CHECKER_ROOT=$PWD
+export AFL_PRELOAD="${BUFFER_CHECKER_ROOT}/libbuffer_check.so"
+export LD_PRELOAD="$AFL_PRELOAD"
 export LD_LIBRARY_PATH="$BUFFER_CHECKER_ROOT"
 cd ..
 ```
@@ -56,7 +59,6 @@ mv /usr/local/etc/iked/ca/myca.srl /usr/local/etc/iked/private/
 
 ```sh
 mkdir -p build && cd build
-export AFL_PATH=/path/to/AFLplusplus    # source dir, not install dir
 CC=afl-clang-lto CXX=afl-clang-lto++ LDFLAGS=-lexecinfo \
     cmake -DCMAKE_BUILD_TYPE=Debug ..
 AFL_USE_ASAN=1 AFL_USE_UBSAN=1 BUFFER_CHECKER_ROOT=$BUFFER_CHECKER_ROOT make -j4
@@ -68,18 +70,22 @@ echo $?
 mkdir -p seeds out
 dd if=/dev/urandom of=seeds/seed bs=512 count=8
 
+export ASAN_OPTIONS='verify_asan_link_order=0:abort_on_error=1:symbolize=0'
 afl-fuzz -i seeds -o out -m none \
     -- ./iked/iked -d -f ../iked.conf
 ```
 
-`AFL_PATH` must point at the AFL++ source/build directory (the one that contains `afl-compiler-rt.o`). `LDFLAGS=-lexecinfo` is needed on FreeBSD because AFL++'s `afl-compiler-rt.o` references `backtrace()` which lives in `libexecinfo.so`.
+`LDFLAGS=-lexecinfo` is needed on FreeBSD because AFL++'s
+`afl-compiler-rt.o` references `backtrace()`, which lives in
+`libexecinfo.so`.
 
 ## 6. Detect cross-compartment pointer leaks (`ENABLE_PTR_CHECK=1`)
 
 ```sh
 cd $BUFFER_CHECKER_ROOT
 make clean
-make ENABLE_PTR_CHECK=1 ENABLE_MSAN_CHECK=0
+make USE_IMSG=1 INTERCEPT_IMSG_COMPOSE=1 \
+    INTERCEPT_IMSG_COMPOSEV=1 ENABLE_PTR_CHECK=1 ENABLE_MSAN_CHECK=0
 export AFL_PRELOAD="${BUFFER_CHECKER_ROOT}/libbuffer_check.so"
 
 cd /PATH/TO/openiked-portable/build
@@ -93,7 +99,8 @@ Aborts on the first cross-compartment pointer; suppress false positives via `ptr
 ```sh
 cd $BUFFER_CHECKER_ROOT
 make clean
-make ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=1
+make USE_IMSG=1 INTERCEPT_IMSG_COMPOSE=1 \
+    INTERCEPT_IMSG_COMPOSEV=1 ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=1
 export MSAN_OPTIONS='handle_sigbus=0:exit_code=86:symbolize=0:exit_code=0'
 
 cd /PATH/TO/openiked-portable/build

@@ -146,9 +146,10 @@
  add_library(iked-shared OBJECT
  	ikev2_pld.c
  	imsg_util.c
-@@ -129,6 +134,13 @@
+@@ -129,6 +134,14 @@
  	ssl
  	compat
++	openbsd-imsg
  	iked-shared
 +	# FUZZ: structured-input helper (static archive) and runtime
 +	# pointer-leak detector (shared object).  -lexecinfo is needed on
@@ -160,3 +161,30 @@
  )
  
  if (WITH_SYSTEMD)
+--- a/compat/CMakeLists.txt
++++ b/compat/CMakeLists.txt
+@@ -43,11 +43,14 @@
+ 	list(APPEND SRCS ${IKED_COMPAT}/getopt_long.c)
+ endif()
+ if(NOT HAVE_IMSG_H OR NOT HAVE_MSGBUF_NEW_READER)
+-	list(APPEND SRCS
+-		# imsg
++	add_library(openbsd-imsg SHARED
+ 		${IKED_COMPAT}/imsg.c
+ 		${IKED_COMPAT}/imsg-buffer.c
+ 	)
++	target_include_directories(openbsd-imsg PUBLIC .)
++else()
++	add_library(openbsd-imsg INTERFACE)
++	target_link_libraries(openbsd-imsg INTERFACE util)
+ endif()
+ if(NOT HAVE_STRLCPY)
+ 	list(APPEND SRCS ${IKED_COMPAT}/strlcpy.c)
+@@ -101,6 +104,7 @@ if(SRCS)
+ 	add_library(compat OBJECT ${SRCS})
+ 	target_compile_options(compat PRIVATE ${CFLAGS})
+ 	target_include_directories(compat PUBLIC .)
++	target_link_libraries(compat PUBLIC openbsd-imsg)
+ else()
+ 	add_library(compat INTERFACE)
+ 	target_include_directories(compat INTERFACE .)
