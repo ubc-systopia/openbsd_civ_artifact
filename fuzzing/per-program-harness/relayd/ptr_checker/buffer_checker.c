@@ -1,124 +1,142 @@
 #define _GNU_SOURCE
-#include <signal.h>
-#include <stdio.h>
+#include <dlfcn.h>
 #include <stdlib.h>
+#include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/types.h>
 #include <sys/uio.h>
-#include <dlfcn.h>
+
 #include "buffer_check_lib.h"
-#include <stdatomic.h>
 
-struct	msgbuf {
-#define	MSG_MAGIC	0x063061
-	long	msg_magic;		/* [I] buffer magic value */
-	long	msg_bufx;		/* [L] write pointer */
-	long	msg_bufr;		/* [L] read pointer */
-	long	msg_bufs;		/* [I] real msg_bufc size (bytes) */
-	long	msg_bufd;		/* [L] number of dropped bytes */
-	char	msg_bufc[1];		/* [Lw] buffer */
+struct imsgbuf;
+
+#ifdef USE_IMSG
+struct wire_imsg_hdr {
+	uint32_t type;
+	uint32_t len;
+	uint32_t peerid;
+	pid_t pid;
 };
 
-struct imsgbuf {
-	struct msgbuf		*w;
-	pid_t			 pid;
-	uint32_t		 maxsize;
-	int			 fd;
-	int			 flags;
-};
+static void
+check_imsg_iov(const struct iovec *iov, size_t iovcnt)
+{
+	struct wire_imsg_hdr hdr;
+	unsigned char *wire;
+	size_t i, offset, total;
 
-#ifdef INTERCEPT_WRITE
-ssize_t write(int fd, const void *buf, size_t nbytes) {
-	check_buffer(buf, nbytes);
-
-	static ssize_t (*real_write)(int, const void *, size_t) = NULL;
-	if (!real_write) {
-		real_write = (ssize_t (*)(int, const void *, size_t))dlsym(RTLD_NEXT, "write");
+	total = 0;
+	for (i = 0; i < iovcnt; i++) {
+		if (iov[i].iov_len > SIZE_MAX - total)
+			return;
+		total += iov[i].iov_len;
+	}
+	if (total == 0)
+		return;
+	if ((wire = malloc(total)) == NULL)
+		return;
+	offset = 0;
+	for (i = 0; i < iovcnt; i++) {
+		memcpy(wire + offset, iov[i].iov_base, iov[i].iov_len);
+		offset += iov[i].iov_len;
 	}
 
-	return real_write(fd, buf, nbytes);
+	offset = 0;
+	while (total - offset >= sizeof(hdr)) {
+		memcpy(&hdr, wire + offset, sizeof(hdr));
+		if (hdr.len < sizeof(hdr) || hdr.len > total - offset)
+			break;
+		if (hdr.len > sizeof(hdr))
+			check_buffer(wire + offset + sizeof(hdr),
+			    hdr.len - sizeof(hdr));
+		offset += hdr.len;
+	}
+	free(wire);
 }
 #endif
 
-#ifdef INTERCEPT_SENDMSG
-ssize_t sendmsg(int fd, const struct msghdr *msg, int flags) {
-	printf("intercepting sendmsg!!!\n");
-	if (msg && msg->msg_iov) {
-		int iov_idx;
-		for (iov_idx = 0; iov_idx < msg->msg_iovlen; iov_idx++) {
-#ifdef USE_IMSG
-			if (msg->msg_iov[iov_idx].iov_len > 16) {
-				if (msg->msg_iov[iov_idx].iov_len - 16 == 248)
-					printf("I found it!!!!!!!!!!!!!\n");
-				check_buffer(msg->msg_iov[iov_idx].iov_base + 16,
-			             msg->msg_iov[iov_idx].iov_len - 16);
-			} else {
-				// printf("payload size is %zu smaller than 16, skip msan checks!", msg->msg_iov[iov_idx].iov_len);
-			}
-#else
-			check_buffer(msg->msg_iov[iov_idx].iov_base,
-			             msg->msg_iov[iov_idx].iov_len);
-#endif
-		}
-	}
+#ifdef INTERCEPT_WRITE
+ssize_t
+write(int fd, const void *buf, size_t nbytes)
+{
+	static ssize_t (*real_write)(int, const void *, size_t);
 
-	static ssize_t (*real_sendmsg)(int, const struct msghdr *, int) = NULL;
-	if (!real_sendmsg) {
-		real_sendmsg = (ssize_t (*)(int, const struct msghdr *, int))dlsym(RTLD_NEXT, "sendmsg");
+	check_buffer(buf, nbytes);
+	if (real_write == NULL) {
+		real_write = (ssize_t (*)(int, const void *, size_t))
+		    dlsym(RTLD_NEXT, "write");
 	}
-
-	return real_sendmsg(fd, msg, flags);
+	return real_write(fd, buf, nbytes);
 }
 #endif
 
 #ifdef INTERCEPT_IMSG_COMPOSE
 int
-imsg_compose(struct imsgbuf *imsgbuf, uint32_t type, uint32_t id, pid_t pid, int fd, const void *data, uint16_t datalen) {
-	printf("intercepting imsg_compose!!!\n");
+imsg_compose(struct imsgbuf *imsgbuf, uint32_t type, uint32_t id, pid_t pid,
+    int fd, const void *data, size_t datalen)
+{
+	static int (*real_imsg_compose)(struct imsgbuf *, uint32_t, uint32_t,
+	    pid_t, int, const void *, size_t);
 
 	check_buffer(data, datalen);
-
-	static int (*real_imsg_compose)(struct imsgbuf *, uint32_t, uint32_t, pid_t, int, const void *, size_t) = NULL;
-	if (!real_imsg_compose) {
-		real_imsg_compose = (int (*)(struct imsgbuf *, uint32_t, uint32_t, pid_t, int, const void *, size_t))dlsym(RTLD_NEXT, "imsg_compose");
+	if (real_imsg_compose == NULL) {
+		real_imsg_compose = (int (*)(struct imsgbuf *, uint32_t,
+		    uint32_t, pid_t, int, const void *, size_t))
+		    dlsym(RTLD_NEXT, "imsg_compose");
 	}
-
 	return real_imsg_compose(imsgbuf, type, id, pid, fd, data, datalen);
 }
 #endif
 
 #ifdef INTERCEPT_IMSG_COMPOSEV
 int
-imsg_composev(struct imsgbuf *imsgbuf, uint32_t type, uint32_t id, pid_t pid, int fd, const struct iovec *iov, int iovcnt) {
-	printf("intercepting imsg_composev!!!\n");
+imsg_composev(struct imsgbuf *imsgbuf, uint32_t type, uint32_t id, pid_t pid,
+    int fd, const struct iovec *iov, int iovcnt)
+{
+	static int (*real_imsg_composev)(struct imsgbuf *, uint32_t, uint32_t,
+	    pid_t, int, const struct iovec *, int);
+	int i;
 
-	if (iov) {
-		int iov_idx;
-		for (iov_idx = 0; iov_idx < iovcnt; iov_idx++) {
-			check_buffer(iov[iov_idx].iov_base, iov[iov_idx].iov_len);
-		}
+	if (iov != NULL) {
+		for (i = 0; i < iovcnt; i++)
+			check_buffer(iov[i].iov_base, iov[i].iov_len);
 	}
-
-	static int (*real_imsg_composev)(struct imsgbuf *, uint32_t, uint32_t, pid_t, int, const struct iovec *, int) = NULL;
-	if (!real_imsg_composev) {
-		real_imsg_composev = (int (*)(struct imsgbuf *, uint32_t, uint32_t, pid_t, int, const struct iovec *, int))dlsym(RTLD_NEXT, "imsg_composev");
+	if (real_imsg_composev == NULL) {
+		real_imsg_composev = (int (*)(struct imsgbuf *, uint32_t,
+		    uint32_t, pid_t, int, const struct iovec *, int))
+		    dlsym(RTLD_NEXT, "imsg_composev");
 	}
-
 	return real_imsg_composev(imsgbuf, type, id, pid, fd, iov, iovcnt);
 }
 #endif
 
-#ifdef INTERCEPT_MUST_WRITE
-void
-must_write(int fd, const void *buf, size_t n)
+#ifdef INTERCEPT_SENDMSG
+ssize_t
+sendmsg(int fd, const struct msghdr *msg, int flags)
 {
-	check_buffer(buf, n);
+	static ssize_t (*real_sendmsg)(int, const struct msghdr *, int);
 
-	static void (*real_must_write)(int, const void *, size_t) = NULL;
-	if (!real_must_write) {
-		real_must_write = (void (*)(int, const void *, size_t))dlsym(RTLD_NEXT, "must_write");
+	printf("intercepting sendmsg!!!\n");
+	if (msg != NULL && msg->msg_iov != NULL) {
+#ifdef USE_IMSG
+		check_imsg_iov(msg->msg_iov, msg->msg_iovlen);
+#else
+		size_t i;
+
+		for (i = 0; i < msg->msg_iovlen; i++) {
+			check_buffer(msg->msg_iov[i].iov_base,
+			    msg->msg_iov[i].iov_len);
+		}
+#endif
 	}
 
-	real_must_write(fd, buf, n);
+	if (real_sendmsg == NULL) {
+		real_sendmsg = (ssize_t (*)(int, const struct msghdr *, int))
+		    dlsym(RTLD_NEXT, "sendmsg");
+	}
+
+	return real_sendmsg(fd, msg, flags);
 }
 #endif

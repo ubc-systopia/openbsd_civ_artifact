@@ -1,6 +1,24 @@
---- a/usr.sbin/relayd/Makefile	2026-05-02 00:06:16.958114000 -0700
-+++ b/usr.sbin/relayd/Makefile	2026-05-02 00:00:52.077720000 -0700
-@@ -51,6 +51,29 @@
+diff -ruN a/lib/libutil/Makefile b/lib/libutil/Makefile
+--- a/lib/libutil/Makefile	2026-09-18 00:37:55.042135000 +0000
++++ b/lib/libutil/Makefile	2026-09-18 00:37:55.085747000 +0000
+@@ -3,6 +3,13 @@
+ 
+ LIB=	util
+ 
++CLEANFILES+=	libopenbsd_imsg.so
++all: libopenbsd_imsg.so
++
++libopenbsd_imsg.so: imsg.c imsg-buffer.c
++	${CC} ${CFLAGS} -fPIC -shared \
++	    -Wl,-soname,libopenbsd_imsg.so -o ${.TARGET} ${.ALLSRC}
++
+ VERSION_SCRIPT=	${.CURDIR}/Symbols.map
+ 
+ HDRS=	ber.h util.h imsg.h
+diff -ruN a/usr.sbin/relayd/Makefile b/usr.sbin/relayd/Makefile
+--- a/usr.sbin/relayd/Makefile	2026-09-18 00:37:55.034406000 +0000
++++ b/usr.sbin/relayd/Makefile	2026-09-18 00:37:55.078403000 +0000
+@@ -51,6 +51,32 @@
  CFLAGS+=	-Wmissing-declarations
  CFLAGS+=	-Wshadow -Wpointer-arith
  CFLAGS+=	-Wsign-compare -Wcast-qual
@@ -27,11 +45,15 @@
 +CFLAGS+=		-fsanitize-recover=memory
 +LDADD+=			${BUFFER_CHECKER_ROOT}/libmsg_generator.a
 +LDADD+=			-L${BUFFER_CHECKER_ROOT} -lbuffer_check
++LIBUTIL=		${.CURDIR}/../../lib/libutil/libopenbsd_imsg.so
++LDADD:=			${LDADD:S,${.CURDIR}/../../lib/libutil/libutil.a,${LIBUTIL},}
++LDFLAGS+=		-Wl,-rpath,${.CURDIR}/../../lib/libutil
 +# END harness
  
  .include <bsd.prog.mk>
---- a/usr.sbin/relayd/proc.c	2026-05-02 00:06:16.960027000 -0700
-+++ b/usr.sbin/relayd/proc.c	2026-05-01 22:01:58.184139000 -0700
+diff -ruN a/usr.sbin/relayd/proc.c b/usr.sbin/relayd/proc.c
+--- a/usr.sbin/relayd/proc.c	2026-09-18 00:37:55.036352000 +0000
++++ b/usr.sbin/relayd/proc.c	2026-09-18 00:37:55.080156000 +0000
 @@ -21,6 +21,7 @@
  #include <sys/queue.h>
  #include <sys/socket.h>
@@ -96,19 +118,9 @@
  
  		/*
  		 * Create the children sockets so we can use them
-@@ -655,6 +681,10 @@
- 		case IMSG_CTL_PROCFD:
- 			IMSG_SIZE_CHECK(&imsg, &pf);
- 			memcpy(&pf, imsg.data, sizeof(pf));
-+			if (pf.pf_procid < 0 || pf.pf_procid > 4)
-+				break;
-+			if (pf.pf_instance != 0)
-+				break;
- 			proc_accept(ps, imsg.fd, pf.pf_procid,
- 			    pf.pf_instance);
- 			break;
---- a/usr.sbin/relayd/relayd.c	2026-05-02 00:06:16.960914000 -0700
-+++ b/usr.sbin/relayd/relayd.c	2026-05-01 21:25:16.704503000 -0700
+diff -ruN a/usr.sbin/relayd/relayd.c b/usr.sbin/relayd/relayd.c
+--- a/usr.sbin/relayd/relayd.c	2026-09-18 00:37:55.038200000 +0000
++++ b/usr.sbin/relayd/relayd.c	2026-09-18 00:37:55.081824000 +0000
 @@ -56,7 +56,10 @@
  #include <tls.h>
  
@@ -225,7 +237,7 @@
  	default:
  		return (-1);
  	}
-@@ -520,21 +593,25 @@
+@@ -520,21 +593,24 @@
  		if (bnd.bnd_proc > env->sc_conf.prefork_relay)
  			fatalx("%s: invalid relay proc", __func__);
  		switch (bnd.bnd_proto) {
@@ -245,7 +257,6 @@
 +				/* NOTREACHED */
  		}
  		s = bindany(&bnd);
-+		bnd.bnd_proc = 0;
  		proc_compose_imsg(ps, PROC_RELAY, bnd.bnd_proc,
 -		    IMSG_BINDANY, -1, s, &bnd.bnd_id, sizeof(bnd.bnd_id));
 +				IMSG_BINDANY, -1, s, &bnd.bnd_id, sizeof(bnd.bnd_id));
@@ -259,7 +270,7 @@
  	default:
  		return (-1);
  	}
-@@ -551,6 +628,9 @@
+@@ -551,6 +627,9 @@
  	switch (imsg->hdr.type) {
  	case IMSG_CFG_DONE:
  		parent_configure_done(env);
@@ -269,8 +280,9 @@
  		break;
  	default:
  		return (-1);
---- a/usr.sbin/relayd/relayd.h	2026-05-02 00:06:16.961472000 -0700
-+++ b/usr.sbin/relayd/relayd.h	2026-05-01 21:56:24.150427000 -0700
+diff -ruN a/usr.sbin/relayd/relayd.h b/usr.sbin/relayd/relayd.h
+--- a/usr.sbin/relayd/relayd.h	2026-09-18 00:37:55.040227000 +0000
++++ b/usr.sbin/relayd/relayd.h	2026-09-18 00:37:55.083769000 +0000
 @@ -1063,6 +1063,7 @@
  	IMSG_SESS_PUBLISH,	/* from relay to pfe */
  	IMSG_SESS_UNPUBLISH,

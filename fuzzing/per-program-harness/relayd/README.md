@@ -6,8 +6,11 @@ The `ptr_checker` directory is bundled alongside this README. Build it with the 
 
 ```sh
 cd ptr_checker
-make ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=0
+make USE_IMSG=1 INTERCEPT_IMSG_COMPOSE=1 \
+    INTERCEPT_IMSG_COMPOSEV=1 ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=0
 export BUFFER_CHECKER_ROOT=$PWD
+export AFL_PRELOAD="${BUFFER_CHECKER_ROOT}/libbuffer_check.so"
+export LD_PRELOAD="$AFL_PRELOAD"
 export LD_LIBRARY_PATH="$BUFFER_CHECKER_ROOT"
 cd ..
 ```
@@ -45,7 +48,9 @@ cd ../libutil   && make
 cd ../../usr.sbin/relayd
 ```
 
-These are linked into relayd as static `.a` archives; plain `make` is enough.
+The patched `libutil` Makefile also builds `libopenbsd_imsg.so` directly with
+the compiler. relayd links that shared object so `LD_PRELOAD` can interpose
+the imsg entry points. No libtool is involved.
 
 ## 5. Create a minimal `relayd.conf`
 
@@ -65,7 +70,6 @@ EOF
 ## 6. Fuzz with ASan
 
 ```sh
-export AFL_PATH=/path/to/AFLplusplus    # source dir, not install dir
 AFL_USE_ASAN=1 AFL_USE_UBSAN=1 BUFFER_CHECKER_ROOT=$BUFFER_CHECKER_ROOT \
     make CC=afl-clang-lto
 
@@ -75,18 +79,18 @@ printf '' | ./relayd -d -f relayd.conf
 mkdir -p seeds out_asan
 dd if=/dev/urandom of=seeds/seed bs=512 count=4
 
+export ASAN_OPTIONS='verify_asan_link_order=0:abort_on_error=1:symbolize=0'
 afl-fuzz -i seeds -o out_asan -m none \
     -- ./relayd -d -f relayd.conf
 ```
-
-`AFL_PATH` must point at the AFL++ source/build directory (the one that contains `afl-compiler-rt.o`).
 
 ## 7. Fuzz with MSan
 
 ```sh
 cd $BUFFER_CHECKER_ROOT
 make clean
-make ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=1
+make USE_IMSG=1 INTERCEPT_IMSG_COMPOSE=1 \
+    INTERCEPT_IMSG_COMPOSEV=1 ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=1
 export MSAN_OPTIONS='handle_sigbus=0:exit_code=86:symbolize=0:exit_code=0'
 
 cd /PATH/TO/freebsd-relayd/usr.sbin/relayd
@@ -106,7 +110,8 @@ afl-fuzz -i seeds -o out_msan -m none \
 ```sh
 cd $BUFFER_CHECKER_ROOT
 make clean
-make ENABLE_PTR_CHECK=1 ENABLE_MSAN_CHECK=0
+make USE_IMSG=1 INTERCEPT_IMSG_COMPOSE=1 \
+    INTERCEPT_IMSG_COMPOSEV=1 ENABLE_PTR_CHECK=1 ENABLE_MSAN_CHECK=0
 export AFL_PRELOAD="${BUFFER_CHECKER_ROOT}/libbuffer_check.so"
 
 cd /PATH/TO/freebsd-relayd/usr.sbin/relayd

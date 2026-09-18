@@ -30,33 +30,17 @@ ENABLE_MSAN_CHECK = 0
 # we need to skip the header in order to find match.
 USE_IMSG = 0 # for openssh
 
-
-################### what function should we intercept? ###################
-
-# add more functions to here if you adds more later
-
-# INTERCEPT_SENDMSG: Intercept sendmsg() system call
-# Checks all iovec buffers before transmission
+# INTERCEPT_SENDMSG: Intercept the sendmsg(2) transmission boundary.
 INTERCEPT_SENDMSG = 1
 
-# INTERCEPT_IMSG_COMPOSE: Intercept imsg_compose() function
-# Checks message data buffer before composing imsg
+# INTERCEPT_IMSG_COMPOSE: Intercept dynamically linked imsg_compose().
 INTERCEPT_IMSG_COMPOSE = 0
 
-# INTERCEPT_IMSG_COMPOSEV: Intercept imsg_composev() function
-# Checks all iovec buffers before composing imsg
+# INTERCEPT_IMSG_COMPOSEV: Intercept dynamically linked imsg_composev().
 INTERCEPT_IMSG_COMPOSEV = 0
 
-# INTERCEPT_MUST_WRITE: Intercept must_write() function
-# Checks buffer before writing
-INTERCEPT_MUST_WRITE = 0
-
-# INTERCEPT_WRITE: Intercept write() system call
-# Checks buffer before writing
+# INTERCEPT_WRITE: Intercept the write(2) transmission boundary.
 INTERCEPT_WRITE = 0
-
-
-######################################
 
 CFLAGS = -fPIC -Wall -Wextra -O0 -g
 .if ${DEBUG} == 1
@@ -78,9 +62,6 @@ CFLAGS += -DINTERCEPT_IMSG_COMPOSE
 .endif
 .if ${INTERCEPT_IMSG_COMPOSEV} == 1
 CFLAGS += -DINTERCEPT_IMSG_COMPOSEV
-.endif
-.if ${INTERCEPT_MUST_WRITE} == 1
-CFLAGS += -DINTERCEPT_MUST_WRITE
 .endif
 .if ${INTERCEPT_WRITE} == 1
 CFLAGS += -DINTERCEPT_WRITE
