@@ -230,10 +230,13 @@ diff -urN a/src/Makefile.am b/src/Makefile.am
  AM_CPPFLAGS += -DYYSTYPE_IS_DECLARED
  
  ACLOCAL_AMFLAGS = -Im4
-@@ -30,9 +31,12 @@
+@@ -30,9 +31,15 @@
  
  ntpd_LDADD = $(PLATFORM_LDADD) $(PROG_LDADD) -lm
  ntpd_LDADD += $(top_builddir)/compat/libcompat.la
++ntpd_LDADD += $(top_builddir)/compat/libopenbsd_imsg.so
++ntpd_LDFLAGS = -Wl,-rpath,$(abs_top_builddir)/compat
++ntpd_LDADD += -lexecinfo
 +ntpd_LDADD += $(BUFFER_CHECKER_ROOT)/libmsg_generator.a
  if !HAVE_EXPLICIT_BZERO
  ntpd_LDADD += $(top_builddir)/compat/libcompatnoopt.la
@@ -255,3 +258,22 @@ diff -urN a/update.sh b/update.sh
  
  # setup source paths
  dir=`pwd`
+diff -urN a/compat/Makefile.am b/compat/Makefile.am
+--- a/compat/Makefile.am
++++ b/compat/Makefile.am
+@@ -76,8 +76,13 @@
+ endif
+ 
+ if !HAVE_IMSG
+-libcompat_la_SOURCES += imsg.c
+-libcompat_la_SOURCES += imsg-buffer.c
++CLEANFILES = libopenbsd_imsg.so
++all-local: libopenbsd_imsg.so
++
++libopenbsd_imsg.so: imsg.c imsg-buffer.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) \
++	    $(AM_CFLAGS) $(CFLAGS) -fPIC -shared \
++	    -Wl,-soname,libopenbsd_imsg.so -o $@ $^
+ endif
+ 
+ libcompat_la_SOURCES += md5.c

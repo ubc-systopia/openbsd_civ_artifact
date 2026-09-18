@@ -35,8 +35,11 @@ Place `ptr_checker` next to this tree, then build it.
 
 ```sh
 cd ptr_checker
-make ENABLE_PTR_CHECK=1 ENABLE_MSAN_CHECK=0
+make USE_IMSG=1 INTERCEPT_IMSG_COMPOSE=1 \
+    INTERCEPT_IMSG_COMPOSEV=1 ENABLE_PTR_CHECK=1 ENABLE_MSAN_CHECK=0
 export BUFFER_CHECKER_ROOT=$PWD
+export AFL_PRELOAD="${BUFFER_CHECKER_ROOT}/libbuffer_check.so"
+export LD_PRELOAD="$AFL_PRELOAD"
 cd ..
 ```
 
@@ -47,7 +50,8 @@ cd ..
 ```sh
 cd openntpd-portable
 ./autogen.sh
-./configure CPPFLAGS=-I/usr/local/include LDFLAGS=-L/usr/local/lib
+./configure CPPFLAGS=-I/usr/local/include \
+    LDFLAGS="-L/usr/local/lib -lexecinfo"
 ```
 
 `autogen.sh` runs the patched `update.sh`, which clones `openntpd-openbsd`, checks out the pinned commit, copies in the source files, and applies every `patches/*.patch`.
@@ -60,13 +64,12 @@ AFL_USE_ASAN=1 AFL_USE_UBSAN=1 BUFFER_CHECKER_ROOT=$BUFFER_CHECKER_ROOT \
     make CC=afl-clang-lto
 
 # Sanity check: empty stdin should exit 0 within ~10ms.
-printf '' | LD_PRELOAD=$BUFFER_CHECKER_ROOT/libbuffer_check.so ./src/ntpd -d
+printf '' | ./src/.libs/ntpd -d
 
 mkdir -p in out_asan
 dd if=/dev/urandom of=in/seed bs=512 count=1
 
-AFL_PRELOAD=$BUFFER_CHECKER_ROOT/libbuffer_check.so \
-    afl-fuzz -i in -o out_asan -m none -- ./src/ntpd -d
+afl-fuzz -i in -o out_asan -m none -- ./src/.libs/ntpd -d
 ```
 
 `AFL_PATH` must point at the AFL++ source/build directory (the one that contains `afl-compiler-rt.o`). `AFL_PRELOAD` loads `libbuffer_check.so` into each forked child so every `sendmsg(2)` is scanned for pointer-shaped values.
@@ -76,7 +79,8 @@ AFL_PRELOAD=$BUFFER_CHECKER_ROOT/libbuffer_check.so \
 ```sh
 cd $BUFFER_CHECKER_ROOT
 make clean
-make ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=1
+make USE_IMSG=1 INTERCEPT_IMSG_COMPOSE=1 \
+    INTERCEPT_IMSG_COMPOSEV=1 ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=1
 export MSAN_OPTIONS='handle_sigbus=0:exit_code=86:symbolize=0:exit_code=0'
 
 cd /path/to/openntpd-portable
@@ -85,7 +89,7 @@ AFL_USE_MSAN=1 BUFFER_CHECKER_ROOT=$BUFFER_CHECKER_ROOT \
     make CC=afl-clang-lto
 
 mkdir -p out_msan
-afl-fuzz -i in -o out_msan -m none -- ./src/ntpd -d
+afl-fuzz -i in -o out_msan -m none -- ./src/.libs/ntpd -d
 ```
 
 `-fsanitize-recover=memory` is baked into `src/Makefile.am` so MSan continues past the first uninit hit.
