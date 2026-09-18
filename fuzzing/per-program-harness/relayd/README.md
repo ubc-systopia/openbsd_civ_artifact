@@ -2,7 +2,7 @@
 
 ## 1. Build the `ptr_checker` library (sanity-check mode)
 
-The `ptr_checker` directory is bundled alongside this README. Build it with the pointer-leak detector compiled out for the productive ASan/MSan passes.
+Copy the `ptr_checker` directory next to this README, then build it with the pointer-leak detector compiled out for the productive ASan/MSan passes.
 
 ```sh
 cd ptr_checker
