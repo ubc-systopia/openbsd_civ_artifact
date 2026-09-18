@@ -1,7 +1,31 @@
-diff -ruN a/mk/smtpd/Makefile.am b/mk/smtpd/Makefile.am
---- a/mk/smtpd/Makefile.am	2026-04-30 21:02:45.607309000 -0700
-+++ b/mk/smtpd/Makefile.am	2026-04-30 21:04:16.929532000 -0700
-@@ -120,9 +120,12 @@
+diff -ruN -x .git -x '*.orig' -x '*.rej' a/configure.ac b/configure.ac
+--- a/configure.ac	2026-09-18 02:58:58.186261995 +0200
++++ b/configure.ac	2026-09-18 02:58:58.215681137 +0200
+@@ -240,10 +240,7 @@
+ 	[AC_LIBOBJ([inet_net_pton])])
+ 
+ AC_SEARCH_LIBS([imsg_init], [util imsg],
+-	[AC_DEFINE([HAVE_IMSG_INIT], 1, [1 if have imsg_init])], [
+-	AC_LIBOBJ([imsg])
+-	AC_LIBOBJ([imsg-buffer])
+-])
++	[AC_DEFINE([HAVE_IMSG_INIT], 1, [1 if have imsg_init])], [])
+ 
+ AC_SEARCH_LIBS([pidfile], [util],
+ 	[AC_DEFINE([HAVE_PIDFILE], 1, [1 if have pidfile])],
+diff -ruN -x .git -x '*.orig' -x '*.rej' a/Makefile.am b/Makefile.am
+--- a/Makefile.am	2026-09-18 02:58:58.164843325 +0200
++++ b/Makefile.am	2026-09-18 02:58:58.215612789 +0200
+@@ -1,4 +1,4 @@
+-SUBDIRS =		mk contrib openbsd-compat
++SUBDIRS =		openbsd-compat mk contrib
+ 
+ EXTRA_DIST =		CHANGES.md \
+ 			LICENSE \
+diff -ruN -x .git -x '*.orig' -x '*.rej' a/mk/smtpd/Makefile.am b/mk/smtpd/Makefile.am
+--- a/mk/smtpd/Makefile.am	2026-09-18 02:58:58.186261995 +0200
++++ b/mk/smtpd/Makefile.am	2026-09-18 02:58:58.215782037 +0200
+@@ -120,9 +120,17 @@
  			-I$(top_srcdir)/usr.sbin/smtpd \
  			-I$(top_srcdir)/openbsd-compat \
  			-I$(top_srcdir)/openbsd-compat/libtls \
@@ -11,13 +35,34 @@ diff -ruN a/mk/smtpd/Makefile.am b/mk/smtpd/Makefile.am
 -LDADD=			$(LIBOBJS) $(DB_LIB)
 +LDADD=			$(LIBOBJS) $(DB_LIB) \
 +			-L$(BUFFER_CHECKER_ROOT) -lmsg_generator -lbuffer_check
++LDADD+=			$(top_builddir)/openbsd-compat/libopenbsd_imsg.so
++LDFLAGS+=		-Wl,-rpath,$(abs_top_builddir)/openbsd-compat
 +AM_CFLAGS +=		-fsanitize-recover=memory
++
++$(top_builddir)/openbsd-compat/libopenbsd_imsg.so:
++	$(MAKE) -C $(top_builddir)/openbsd-compat libopenbsd_imsg.so
  
  MANPAGES=		aliases.5.out forward.5.out smtpd.8.out	\
  			smtpd.conf.5.out smtpd-filters.7.out \
-diff -ruN a/usr.sbin/smtpd/ca.c b/usr.sbin/smtpd/ca.c
---- a/usr.sbin/smtpd/ca.c	2026-04-30 21:02:45.620169000 -0700
-+++ b/usr.sbin/smtpd/ca.c	2026-04-30 20:16:54.331777000 -0700
+diff -ruN -x .git -x '*.orig' -x '*.rej' a/openbsd-compat/Makefile.am b/openbsd-compat/Makefile.am
+--- a/openbsd-compat/Makefile.am	2026-09-18 02:58:58.165732076 +0200
++++ b/openbsd-compat/Makefile.am	2026-09-18 02:58:58.215749876 +0200
+@@ -18,3 +18,12 @@
+ 		sys/queue.h			\
+ 		sys/tree.h			\
+ 		waitpid.h
++
++CLEANFILES = libopenbsd_imsg.so
++all-local: libopenbsd_imsg.so
++
++libopenbsd_imsg.so: imsg.c imsg-buffer.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) \
++	    -I$(top_builddir) -I$(top_srcdir)/openbsd-compat \
++	    $(AM_CFLAGS) $(CFLAGS) -fPIC -shared \
++	    -Wl,-soname,libopenbsd_imsg.so -o $@ $^
+diff -ruN -x .git -x '*.orig' -x '*.rej' a/usr.sbin/smtpd/ca.c b/usr.sbin/smtpd/ca.c
+--- a/usr.sbin/smtpd/ca.c	2026-09-18 02:58:58.188262012 +0200
++++ b/usr.sbin/smtpd/ca.c	2026-09-18 02:58:58.214720280 +0200
 @@ -291,6 +291,9 @@
  		free(to);
  		EC_KEY_free(ecdsa);
@@ -28,9 +73,9 @@ diff -ruN a/usr.sbin/smtpd/ca.c b/usr.sbin/smtpd/ca.c
  	}
  
  	fatalx("ca_imsg: unexpected %s imsg", imsg_to_str(imsg->hdr.type));
-diff -ruN a/usr.sbin/smtpd/control.c b/usr.sbin/smtpd/control.c
---- a/usr.sbin/smtpd/control.c	2026-04-30 21:02:45.620747000 -0700
-+++ b/usr.sbin/smtpd/control.c	2026-04-30 20:16:54.331764000 -0700
+diff -ruN -x .git -x '*.orig' -x '*.rej' a/usr.sbin/smtpd/control.c b/usr.sbin/smtpd/control.c
+--- a/usr.sbin/smtpd/control.c	2026-09-18 02:58:58.170437012 +0200
++++ b/usr.sbin/smtpd/control.c	2026-09-18 02:58:58.214792316 +0200
 @@ -157,6 +157,10 @@
  		if (stat_backend)
  			stat_backend->set(key, &val);
@@ -42,9 +87,9 @@ diff -ruN a/usr.sbin/smtpd/control.c b/usr.sbin/smtpd/control.c
  	}
  
  	fatalx("control_imsg: unexpected %s imsg",
-diff -ruN a/usr.sbin/smtpd/dispatcher.c b/usr.sbin/smtpd/dispatcher.c
---- a/usr.sbin/smtpd/dispatcher.c	2026-04-30 21:02:45.621005000 -0700
-+++ b/usr.sbin/smtpd/dispatcher.c	2026-04-30 20:16:54.331770000 -0700
+diff -ruN -x .git -x '*.orig' -x '*.rej' a/usr.sbin/smtpd/dispatcher.c b/usr.sbin/smtpd/dispatcher.c
+--- a/usr.sbin/smtpd/dispatcher.c	2026-09-18 02:58:58.170437012 +0200
++++ b/usr.sbin/smtpd/dispatcher.c	2026-09-18 02:58:58.214847600 +0200
 @@ -126,6 +126,9 @@
  	case IMSG_MDA_DONE:
  		mda_imsg(p, imsg);
@@ -55,9 +100,9 @@ diff -ruN a/usr.sbin/smtpd/dispatcher.c b/usr.sbin/smtpd/dispatcher.c
  	default:
  		break;
  	}
-diff -ruN a/usr.sbin/smtpd/lka.c b/usr.sbin/smtpd/lka.c
---- a/usr.sbin/smtpd/lka.c	2026-04-30 21:02:45.622279000 -0700
-+++ b/usr.sbin/smtpd/lka.c	2026-04-30 20:41:35.134814000 -0700
+diff -ruN -x .git -x '*.orig' -x '*.rej' a/usr.sbin/smtpd/lka.c b/usr.sbin/smtpd/lka.c
+--- a/usr.sbin/smtpd/lka.c	2026-09-18 02:58:58.189262021 +0200
++++ b/usr.sbin/smtpd/lka.c	2026-09-18 02:58:58.214901231 +0200
 @@ -632,6 +632,9 @@
  		lka_filter_data_end(reqid);
  		return;
@@ -68,29 +113,9 @@ diff -ruN a/usr.sbin/smtpd/lka.c b/usr.sbin/smtpd/lka.c
  	}
  
  	fatalx("lka_imsg: unexpected %s imsg", imsg_to_str(imsg->hdr.type));
-diff -ruN a/usr.sbin/smtpd/parse.y b/usr.sbin/smtpd/parse.y
---- a/usr.sbin/smtpd/parse.y	2026-04-30 21:02:45.625233000 -0700
-+++ b/usr.sbin/smtpd/parse.y	2025-11-09 23:16:49.653470000 -0800
-@@ -2776,6 +2776,8 @@
- 
- static int	expanding;
- 
-+
-+__attribute__((no_sanitize("memory")))
- int
- igetc(void)
- {
-@@ -2797,6 +2799,7 @@
- 	return (c);
- }
- 
-+__attribute__((no_sanitize("memory")))
- int
- lgetc(int quotec)
- {
-diff -ruN a/usr.sbin/smtpd/queue.c b/usr.sbin/smtpd/queue.c
---- a/usr.sbin/smtpd/queue.c	2026-04-30 21:02:45.625644000 -0700
-+++ b/usr.sbin/smtpd/queue.c	2026-04-30 20:16:54.331758000 -0700
+diff -ruN -x .git -x '*.orig' -x '*.rej' a/usr.sbin/smtpd/queue.c b/usr.sbin/smtpd/queue.c
+--- a/usr.sbin/smtpd/queue.c	2026-09-18 02:58:58.172261874 +0200
++++ b/usr.sbin/smtpd/queue.c	2026-09-18 02:58:58.215240378 +0200
 @@ -524,6 +524,10 @@
  		tv.tv_usec = 10;
  		evtimer_add(&wi->ev, &tv);
@@ -102,9 +127,9 @@ diff -ruN a/usr.sbin/smtpd/queue.c b/usr.sbin/smtpd/queue.c
  	}
  
  	fatalx("queue_imsg: unexpected %s imsg", imsg_to_str(imsg->hdr.type));
-diff -ruN a/usr.sbin/smtpd/smtpd.c b/usr.sbin/smtpd/smtpd.c
---- a/usr.sbin/smtpd/smtpd.c	2026-04-30 21:02:45.629637000 -0700
-+++ b/usr.sbin/smtpd/smtpd.c	2026-04-30 20:41:35.134767000 -0700
+diff -ruN -x .git -x '*.orig' -x '*.rej' a/usr.sbin/smtpd/smtpd.c b/usr.sbin/smtpd/smtpd.c
+--- a/usr.sbin/smtpd/smtpd.c	2026-09-18 02:58:58.193262055 +0200
++++ b/usr.sbin/smtpd/smtpd.c	2026-09-18 02:58:58.215875172 +0200
 @@ -86,6 +86,9 @@
  
  #define SMTPD_MAXARG 32
@@ -206,22 +231,20 @@ diff -ruN a/usr.sbin/smtpd/smtpd.c b/usr.sbin/smtpd/smtpd.c
  }
  
  static void
-@@ -1143,8 +1142,9 @@
+@@ -1143,7 +1142,8 @@
  	if (pidfile(NULL) < 0)
  		err(1, "pidfile");
  
 -	fork_filter_processes();
 +	// fork_filter_processes(); // ??? should we comment this out?
- 
 +
+ 
  	purge_task();
  
- #if HAVE_PLEDGE
-@@ -1152,6 +1152,61 @@
- 	    "getpw sendfd proc exec id inet chown unix", NULL) == -1)
+@@ -1153,6 +1153,67 @@
  		fatal("pledge");
  #endif
-+
+ 
 +	struct imsgbuf lka_buf, queue_buf, control_buf, scheduler_buf, dispatcher_buf, ca_buf;
 +
 +	if (p_lka)
@@ -276,12 +299,19 @@ diff -ruN a/usr.sbin/smtpd/smtpd.c b/usr.sbin/smtpd/smtpd.c
 +			imsgbuf_flush(target);
 +		}
 +	}
- 
++
++	mproc_enable(p_lka);
++	mproc_enable(p_queue);
++	mproc_enable(p_control);
++	mproc_enable(p_dispatcher);
++	mproc_enable(p_ca);
++
  	event_dispatch();
  	fatalx("exited event loop");
-diff -ruN a/usr.sbin/smtpd/smtpd.h b/usr.sbin/smtpd/smtpd.h
---- a/usr.sbin/smtpd/smtpd.h	2026-04-30 21:02:45.630081000 -0700
-+++ b/usr.sbin/smtpd/smtpd.h	2026-04-30 20:16:54.331783000 -0700
+ 
+diff -ruN -x .git -x '*.orig' -x '*.rej' a/usr.sbin/smtpd/smtpd.h b/usr.sbin/smtpd/smtpd.h
+--- a/usr.sbin/smtpd/smtpd.h	2026-09-18 02:58:58.193262055 +0200
++++ b/usr.sbin/smtpd/smtpd.h	2026-09-18 02:58:58.215542496 +0200
 @@ -352,8 +352,12 @@
  	IMSG_CA_RSA_PRIVENC,
  	IMSG_CA_RSA_PRIVDEC,

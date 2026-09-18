@@ -8,7 +8,8 @@ Place the `ptr_checker` directory next to this README and build it with the runt
 
 ```sh
 cd ptr_checker
-make ENABLE_PTR_CHECK=1 ENABLE_MSAN_CHECK=0
+make USE_IMSG=1 INTERCEPT_IMSG_COMPOSE=1 \
+    INTERCEPT_IMSG_COMPOSEV=1 ENABLE_PTR_CHECK=1 ENABLE_MSAN_CHECK=0
 export BUFFER_CHECKER_ROOT=$PWD
 export AFL_PRELOAD="${BUFFER_CHECKER_ROOT}/libbuffer_check.so"
 export LD_PRELOAD="$AFL_PRELOAD"
@@ -28,10 +29,15 @@ patch -p1 < /PATH/TO/fuzz-opensmtpd.patch
 
 pkg install autoconf automake libtool libevent libasr bison
 ./bootstrap
-./configure CPPFLAGS=-I/usr/local/include LDFLAGS=-L/usr/local/lib
+./configure CPPFLAGS=-I/usr/local/include \
+    LDFLAGS="-L/usr/local/lib -lexecinfo"
 ```
 
 `CPPFLAGS` / `LDFLAGS` are required on FreeBSD because libevent, LibreSSL, and libasr live under `/usr/local/`.
+
+The machine hostname must resolve promptly for both IPv4 and IPv6. Add it to
+`/etc/hosts` before fuzzing if DNS on the test machine does not answer both
+queries; otherwise every AFL child can stall during startup.
 
 Provide a minimal config (this overwrites any sendmail config at the same path):
 
@@ -60,6 +66,7 @@ mkdir -p seeds
 dd if=/dev/urandom of=seeds/seed bs=512 count=8
 
 mkdir -p out_asan
+export ASAN_OPTIONS='verify_asan_link_order=0:abort_on_error=1:symbolize=0'
 afl-fuzz -i seeds -o out_asan -m none -- ./smtpd -d -f /etc/mail/smtpd.conf
 ```
 
@@ -72,7 +79,8 @@ Rebuild `ptr_checker` with both flags off (the binary's own MSan instrumentation
 ```sh
 cd $BUFFER_CHECKER_ROOT
 make clean
-make ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=0
+make USE_IMSG=1 INTERCEPT_IMSG_COMPOSE=1 \
+    INTERCEPT_IMSG_COMPOSEV=1 ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=0
 unset AFL_PRELOAD LD_PRELOAD
 export MSAN_OPTIONS='handle_sigbus=0:exit_code=86:symbolize=0:exit_code=0'
 
