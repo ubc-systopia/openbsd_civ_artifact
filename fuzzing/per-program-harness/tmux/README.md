@@ -12,7 +12,8 @@ Place the `ptr_checker` directory next to this README, then build it.
 
 ```sh
 cd ptr_checker
-make ENABLE_PTR_CHECK=1 ENABLE_MSAN_CHECK=0
+make USE_IMSG=1 INTERCEPT_IMSG_COMPOSE=1 \
+    INTERCEPT_IMSG_COMPOSEV=1 ENABLE_PTR_CHECK=1 ENABLE_MSAN_CHECK=0
 
 export BUFFER_CHECKER_ROOT=$PWD
 export AFL_PRELOAD="/lib/libthr.so.3:${BUFFER_CHECKER_ROOT}/libbuffer_check.so"
@@ -60,7 +61,8 @@ afl-fuzz -i in -o out_asan -g 1024 -m none -- ./tmux -S ./tmux-socket
 cd $BUFFER_CHECKER_ROOT
 export MSAN_OPTIONS='handle_sigbus=0:exit_code=86:symbolize=0:exit_code=0'
 make clean
-make ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=1
+make USE_IMSG=1 INTERCEPT_IMSG_COMPOSE=1 \
+    INTERCEPT_IMSG_COMPOSEV=1 ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=1
 
 cd -
 mkdir -p out_msan

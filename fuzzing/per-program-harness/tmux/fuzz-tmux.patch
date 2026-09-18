@@ -1,13 +1,29 @@
 diff -ruN -x .git tmux-orig/Makefile.am fuzz-tmux/Makefile.am
 --- tmux-orig/Makefile.am	2026-04-30 15:52:25.747488000 -0700
 +++ fuzz-tmux/Makefile.am	2026-04-30 15:54:06.305986000 -0700
-@@ -17,6 +17,9 @@
+@@ -1,6 +1,6 @@
+ # Obvious program stuff.
+ bin_PROGRAMS = tmux
+-CLEANFILES = tmux.1.mdoc tmux.1.man cmd-parse.c
++CLEANFILES = tmux.1.mdoc tmux.1.man cmd-parse.c libopenbsd_imsg.so
+ 
+ # Distribution tarball options.
+ EXTRA_DIST = \
+@@ -17,6 +17,16 @@
  
  # Additional object files.
- LDADD = $(LIBOBJS)
+-LDADD = $(LIBOBJS)
++LDADD = $(LIBOBJS) $(IMSG_LIB)
++tmux_DEPENDENCIES = $(IMSG_LIB)
 +LDADD += -L$(BUFFER_CHECKER_ROOT) -lmsg_generator -lbuffer_check
++AM_LDFLAGS += -Wl,-rpath,$(abs_builddir)
 +AM_CPPFLAGS += -I$(BUFFER_CHECKER_ROOT)
 +AM_CFLAGS += -fsanitize-recover=memory
++
++libopenbsd_imsg.so: compat/imsg.c compat/imsg-buffer.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) \
++	    $(AM_CFLAGS) $(CFLAGS) -fPIC -shared \
++	    -Wl,-soname,libopenbsd_imsg.so -o $@ $^
  
  # Set flags for gcc.
  if IS_GCC
@@ -179,3 +195,22 @@ diff -ruN -x .git tmux-orig/tmux.h fuzz-tmux/tmux.h
  uid_t	proc_get_peer_uid(struct tmuxpeer *);
  
  /* cfg.c */
+diff -ruN -x .git tmux-orig/configure.ac fuzz-tmux/configure.ac
+--- tmux-orig/configure.ac
++++ fuzz-tmux/configure.ac
+@@ -640,12 +640,13 @@
+ 
+ # Look for imsg_add in libutil.
+ AC_SEARCH_LIBS(imsg_add, util, found_imsg_add=yes, found_imsg_add=no)
++IMSG_LIB=
+ if test "x$found_imsg_add" = xyes; then
+ 	AC_DEFINE(HAVE_IMSG)
+ else
+-	AC_LIBOBJ(imsg)
+-	AC_LIBOBJ(imsg-buffer)
++	IMSG_LIB=libopenbsd_imsg.so
+ fi
++AC_SUBST(IMSG_LIB)
+ 
+ # Look for daemon, compat/daemon.c used if missing. Solaris 10 has it in
+ # libresolv, but no declaration anywhere, so check for declaration as well as
