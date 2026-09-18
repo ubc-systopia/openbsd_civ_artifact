@@ -128,7 +128,7 @@
  
  ACLOCAL_AMFLAGS = -Im4
  CLEANFILES = $(man_MANS)
-@@ -29,10 +30,13 @@
+@@ -29,10 +30,16 @@
  bgpd_CFLAGS = $(AM_CFLAGS)
  bgpd_CFLAGS += -DSYSCONFDIR=\"$(sysconfdir)\"
  bgpd_CFLAGS += -DRUNSTATEDIR=\"$(runstatedir)\"
@@ -137,8 +137,38 @@
  bgpd_LDADD = $(PLATFORM_LDADD) $(PROG_LDADD) -lutil
  bgpd_LDADD += $(top_builddir)/compat/libcompat.la
  bgpd_LDADD += $(top_builddir)/compat/libcompatnoopt.la
++bgpd_LDFLAGS = -L$(top_builddir)/compat
++bgpd_LDFLAGS += -Wl,-rpath,$(abs_top_builddir)/compat
++bgpd_LDADD += -lopenbsd_imsg
 +bgpd_LDADD += $(BUFFER_CHECKER_ROOT)/libmsg_generator.a
 +bgpd_LDADD += -L$(BUFFER_CHECKER_ROOT) -lbuffer_check
  
  bgpd_SOURCES = bgpd.c
  bgpd_SOURCES += session.c
+@@ -114,7 +120,7 @@
+ bgpd_SOURCES += rtr_proto.c
+ bgpd_SOURCES += flowspec.c
+ 
+-bgpd_DEPENDENCIES = $(man_MANS)
++bgpd_DEPENDENCIES = $(man_MANS) $(top_builddir)/compat/libopenbsd_imsg.so
+ 
+ noinst_HEADERS = bgpd.h
+ noinst_HEADERS += log.h
+--- a/compat/Makefile.am
++++ b/compat/Makefile.am
+@@ -34,8 +34,13 @@
+ endif
+ 
+ if !HAVE_IMSG
+-libcompat_la_SOURCES += imsg.c
+-libcompat_la_SOURCES += imsg-buffer.c
++CLEANFILES = libopenbsd_imsg.so
++all-local: libopenbsd_imsg.so
++
++libopenbsd_imsg.so: imsg.c imsg-buffer.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) \
++	    $(AM_CFLAGS) $(CFLAGS) -fPIC -shared \
++	    -Wl,-soname,libopenbsd_imsg.so -o $@ $^
+ endif
+ 
+ if !HAVE_REALLOCARRAY

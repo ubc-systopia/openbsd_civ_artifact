@@ -6,8 +6,10 @@ Place the `ptr_checker` directory next to this README and build it with the poin
 
 ```sh
 cd ptr_checker
-make ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=0
+make USE_IMSG=1 INTERCEPT_IMSG_COMPOSE=1 \
+    INTERCEPT_IMSG_COMPOSEV=1 ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=0
 export BUFFER_CHECKER_ROOT=$PWD
+export AFL_PRELOAD="${BUFFER_CHECKER_ROOT}/libbuffer_check.so"
 export LD_LIBRARY_PATH="$BUFFER_CHECKER_ROOT"
 cd ..
 ```
@@ -29,13 +31,14 @@ mkdir -p /usr/local/var/run    # control socket directory bgpd binds to
 git clone https://github.com/openbgpd-portable/openbgpd-portable.git
 cd openbgpd-portable
 git checkout 7518125c6930d0029901ca4c4e81f7073c0d8013
-patch -p1 < PATH/TO/update.sh.patch
+patch -p1 < ../update.sh.patch
 ./autogen.sh
-patch -p1 < PATH/TO/fuzz-bgpd.patch
+patch -p1 < ../fuzz-bgpd.patch
 # Re-bootstrap so Makefile.in regenerates from the patched Makefile.am.
 autoreconf -i -f
-./configure CPPFLAGS="-I/usr/local/include" LDFLAGS="-L/usr/local/lib"
-cp PATH/TO/bgpd.conf /usr/local/etc/bgpd.conf
+./configure CPPFLAGS="-I/usr/local/include" \
+    LDFLAGS="-L/usr/local/lib -lexecinfo"
+cp ../bgpd.conf /usr/local/etc/bgpd.conf
 ```
 
 `autogen.sh` must run *before* applying `fuzz-bgpd.patch` because it calls `update.sh`, which copies `bgpd.c` and `bgpd.h` in from the upstream OpenBSD source.
@@ -75,10 +78,11 @@ afl-fuzz -i seeds -o out -m none \
 ```sh
 cd $BUFFER_CHECKER_ROOT
 make clean
-make ENABLE_PTR_CHECK=1 ENABLE_MSAN_CHECK=0
+make USE_IMSG=1 INTERCEPT_IMSG_COMPOSE=1 \
+    INTERCEPT_IMSG_COMPOSEV=1 ENABLE_PTR_CHECK=1 ENABLE_MSAN_CHECK=0
 export AFL_PRELOAD="${BUFFER_CHECKER_ROOT}/libbuffer_check.so"
 
-cd /PATH/TO/openbgpd-portable/src/bgpd
+cd -
 ./bgpd -d -f /usr/local/etc/bgpd.conf </dev/null
 ```
 
@@ -89,10 +93,11 @@ Aborts on the first cross-compartment pointer; this is an inspection pass rather
 ```sh
 cd $BUFFER_CHECKER_ROOT
 make clean
-make ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=1
+make USE_IMSG=1 INTERCEPT_IMSG_COMPOSE=1 \
+    INTERCEPT_IMSG_COMPOSEV=1 ENABLE_PTR_CHECK=0 ENABLE_MSAN_CHECK=1
 export MSAN_OPTIONS='handle_sigbus=0:exit_code=86:symbolize=0:exit_code=0'
 
-cd /PATH/TO/openbgpd-portable/src/bgpd
+cd -
 make clean
 AFL_USE_MSAN=1 BUFFER_CHECKER_ROOT=$BUFFER_CHECKER_ROOT \
     make CC=afl-clang-lto
@@ -101,5 +106,3 @@ mkdir -p out_msan
 afl-fuzz -i seeds -o out_msan -m none \
     -- ./bgpd -d -f /usr/local/etc/bgpd.conf
 ```
-
-`-fsanitize-recover=memory` is baked into `src/bgpd/Makefile.am` so MSan continues past the first uninit hit.
