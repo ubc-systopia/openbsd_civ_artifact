@@ -1,13 +1,7 @@
 # file privileged-compartment harness patch
 
-This artifact intentionally contains a patch rather than a modified source
-tree.  It targets brynet/file commit
-`0ed35aae2d28d92820af7f49c43606a68ca5d0aa`.  The guarded patch retains the
-project's original `main()` and fuzzes its privileged parent-side imsg handler.
-This protocol has no message-type enum: production uses type `-1` for its ACK,
-so the generator covers that value and `0` as an invalid type.
 
-Prepare the source tree on FreeBSD without modifying this artifact directory:
+Prepare the source tree:
 
 ```sh
 git clone https://github.com/brynet/file.git
