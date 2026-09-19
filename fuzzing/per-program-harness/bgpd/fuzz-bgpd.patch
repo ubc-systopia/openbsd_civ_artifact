@@ -1,0 +1,174 @@
+--- a/src/bgpd/bgpd.c	2026-05-01 21:31:23.153928000 -0700
++++ b/src/bgpd/bgpd.c	2026-05-01 21:33:29.241902000 -0700
+@@ -41,6 +41,8 @@
+ #include "log.h"
+ #include "version.h"
+ 
++#include <msg_generator.h>
++
+ void		sighdlr(int);
+ __dead void	usage(void);
+ int		main(int, char *[]);
+@@ -257,6 +259,7 @@
+ 	getsockpair(pipe_m2r);
+ 	getsockpair(pipe_m2roa);
+ 
++#if 0	/* FUZZ: skip fork+exec; harness drives the parent's pipe ends from stdin */
+ 	/* fork children */
+ 	rde_pid = start_child(PROC_RDE, saved_argv0, pipe_m2r[1], debug,
+ 	    cmd_opts & BGPD_OPT_VERBOSE);
+@@ -264,7 +267,75 @@
+ 	    cmd_opts & BGPD_OPT_VERBOSE);
+ 	rtr_pid = start_child(PROC_RTR, saved_argv0, pipe_m2roa[1], debug,
+ 	    cmd_opts & BGPD_OPT_VERBOSE);
++#endif
+ 
++	{
++		/* FUZZ: drive the three child-pipes from stdin via libmsg_generator.
++		 * Compartment 0 = session engine, 1 = route decision engine,
++		 * 2 = RPKI router.  An IMSG_END_OF_MSGS marker is dispatched per
++		 * compartment after stdin is exhausted; the parent's dispatch_imsg
++		 * counts them via eom_counter_inc() and exits cleanly when all
++		 * three have arrived. */
++		struct imsgbuf		 ibuf_fuzz_se;
++		struct imsgbuf		 ibuf_fuzz_rde;
++		struct imsgbuf		 ibuf_fuzz_rtr;
++		struct msg_interface	 iface;
++		struct msg_data		 msg;
++		uint8_t			 i;
++
++		if (imsgbuf_init(&ibuf_fuzz_se, pipe_m2s[1]) == -1 ||
++		    imsgbuf_set_maxsize(&ibuf_fuzz_se, MAX_BGPD_IMSGSIZE) == -1)
++			fatal(NULL);
++		imsgbuf_allow_fdpass(&ibuf_fuzz_se);
++
++		if (imsgbuf_init(&ibuf_fuzz_rde, pipe_m2r[1]) == -1 ||
++		    imsgbuf_set_maxsize(&ibuf_fuzz_rde, MAX_BGPD_IMSGSIZE) == -1)
++			fatal(NULL);
++		imsgbuf_allow_fdpass(&ibuf_fuzz_rde);
++
++		if (imsgbuf_init(&ibuf_fuzz_rtr, pipe_m2roa[1]) == -1 ||
++		    imsgbuf_set_maxsize(&ibuf_fuzz_rtr, MAX_BGPD_IMSGSIZE) == -1)
++			fatal(NULL);
++		imsgbuf_allow_fdpass(&ibuf_fuzz_rtr);
++
++		if (msg_interface_init(&iface, STDIN_FILENO, 3,
++		    IMSG_TYPE_COUNT) != MSG_GEN_SUCCESS)
++			fatalx("msg_interface_init failed");
++		msg_interface_set_endpoint(&iface, 0, &ibuf_fuzz_se);
++		msg_interface_set_endpoint(&iface, 1, &ibuf_fuzz_rde);
++		msg_interface_set_endpoint(&iface, 2, &ibuf_fuzz_rtr);
++		msg_interface_set_eom_type(&iface, IMSG_END_OF_MSGS);
++
++		while (msg_generate(&iface, &msg) == MSG_GEN_SUCCESS) {
++			struct imsgbuf	*target = (struct imsgbuf *)msg.endpoint;
++			uint32_t	 peerid = *(uint32_t *)&msg.aux_data[0];
++			uint32_t	 peerpid = *(uint32_t *)&msg.aux_data[4];
++
++			if (target == NULL)
++				continue;
++			imsg_compose(target, msg.type, peerid, peerpid,
++			    msg.has_fd ? msg.fd : -1,
++			    msg.payload, msg.actual_payload_size);
++		}
++
++		for (i = 0; i < iface.num_compartments; i++) {
++			struct msg_data	 eom_msg;
++			struct imsgbuf	*target;
++
++			if (msg_generate_eom(&iface, i, &eom_msg) !=
++			    MSG_GEN_SUCCESS)
++				continue;
++			target = (struct imsgbuf *)eom_msg.endpoint;
++			if (target == NULL)
++				continue;
++			imsg_compose(target, eom_msg.type, 0, 0, -1, NULL, 0);
++		}
++
++		imsgbuf_flush(&ibuf_fuzz_se);
++		imsgbuf_flush(&ibuf_fuzz_rde);
++		imsgbuf_flush(&ibuf_fuzz_rtr);
++	}
++
+ 	signal(SIGTERM, sighdlr);
+ 	signal(SIGINT, sighdlr);
+ 	signal(SIGHUP, sighdlr);
+@@ -1126,6 +1197,11 @@
+ 				break;
+ 			}
+ 			imsg_forward(ibuf_se, &imsg);
++			break;
++		case IMSG_END_OF_MSGS:
++			/* FUZZ: libmsg_generator EOM hook; library exits when all
++			 * compartments have dispatched their EOM. */
++			eom_counter_inc();
+ 			break;
+ 		default:
+ 			break;
+--- a/src/bgpd/bgpd.h	2026-05-01 21:31:23.551061000 -0700
++++ b/src/bgpd/bgpd.h	2026-05-01 21:32:40.635812000 -0700
+@@ -743,7 +743,9 @@
+ 	IMSG_REFRESH,
+ 	IMSG_DEMOTE,
+ 	IMSG_XON,
+-	IMSG_XOFF
++	IMSG_XOFF,
++	IMSG_TYPE_COUNT,	/* FUZZ: count of real types, used by msg_generator */
++	IMSG_END_OF_MSGS	/* FUZZ: end-of-message marker for harness */
+ };
+ 
+ struct demote_msg {
+--- a/src/bgpd/Makefile.am	2026-05-01 21:31:19.912223000 -0700
++++ b/src/bgpd/Makefile.am	2026-05-01 21:33:47.805632000 -0700
+@@ -15,6 +15,7 @@
+ 
+ AM_CPPFLAGS = -I$(top_srcdir)/include
+ AM_CPPFLAGS += -I$(top_srcdir)/src/bgpd
++AM_CPPFLAGS += -I$(BUFFER_CHECKER_ROOT)
+ 
+ ACLOCAL_AMFLAGS = -Im4
+ CLEANFILES = $(man_MANS)
+@@ -29,10 +30,16 @@
+ bgpd_CFLAGS = $(AM_CFLAGS)
+ bgpd_CFLAGS += -DSYSCONFDIR=\"$(sysconfdir)\"
+ bgpd_CFLAGS += -DRUNSTATEDIR=\"$(runstatedir)\"
++bgpd_CFLAGS += -fsanitize-recover=memory
+ 
+ bgpd_LDADD = $(PLATFORM_LDADD) $(PROG_LDADD) -lutil
+ bgpd_LDADD += $(top_builddir)/compat/libcompat.la
+ bgpd_LDADD += $(top_builddir)/compat/libcompatnoopt.la
++bgpd_LDFLAGS = -L$(top_builddir)/compat
++bgpd_LDFLAGS += -Wl,-rpath,$(abs_top_builddir)/compat
++bgpd_LDADD += -lopenbsd_imsg
++bgpd_LDADD += $(BUFFER_CHECKER_ROOT)/libmsg_generator.a
++bgpd_LDADD += -L$(BUFFER_CHECKER_ROOT) -lbuffer_check
+ 
+ bgpd_SOURCES = bgpd.c
+ bgpd_SOURCES += session.c
+@@ -114,7 +120,7 @@
+ bgpd_SOURCES += rtr_proto.c
+ bgpd_SOURCES += flowspec.c
+ 
+-bgpd_DEPENDENCIES = $(man_MANS)
++bgpd_DEPENDENCIES = $(man_MANS) $(top_builddir)/compat/libopenbsd_imsg.so
+ 
+ noinst_HEADERS = bgpd.h
+ noinst_HEADERS += log.h
+--- a/compat/Makefile.am
++++ b/compat/Makefile.am
+@@ -34,8 +34,13 @@
+ endif
+ 
+ if !HAVE_IMSG
+-libcompat_la_SOURCES += imsg.c
+-libcompat_la_SOURCES += imsg-buffer.c
++CLEANFILES = libopenbsd_imsg.so
++all-local: libopenbsd_imsg.so
++
++libopenbsd_imsg.so: imsg.c imsg-buffer.c
++	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) \
++	    $(AM_CFLAGS) $(CFLAGS) -fPIC -shared \
++	    -Wl,-soname,libopenbsd_imsg.so -o $@ $^
+ endif
+ 
+ if !HAVE_REALLOCARRAY

@@ -1,0 +1,11 @@
+--- monitor.c.orig
++++ monitor.c
+@@ -1005,6 +1005,8 @@
+ 	}
+ 
+ 	debug3_f("sending MONITOR_ANS_PWNAM: %d", allowed);
++	/* Skip the known raw ServerOptions pointers to reach later endpoints. */
++	ptr_check_skip(sshbuf_ptr(m), sshbuf_len(m));
+ 	mm_request_send(sock, MONITOR_ANS_PWNAM, m);
+ 
+ 	/* Allow service/style information on the auth context */

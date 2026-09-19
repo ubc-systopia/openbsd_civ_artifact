@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="The message generator library used by the CIV fuzzing harnesses." />
+      <link rel="shortcut icon" href="img/favicon.ico" />
+    <title>CIV Fuzzing Framework</title>
+    <link rel="stylesheet" href="css/theme.css" />
+    <link rel="stylesheet" href="css/theme_extra.css" />
+        <link href="assets/github.min.css" rel="stylesheet" />
+
+      <script>
+        // Current page data
+        var mkdocs_page_name = "CIV Fuzzing Framework";
+        var mkdocs_page_input_path = "index.md";
+        var mkdocs_page_url = null;
+      </script>
+
+    <!--[if lt IE 9]>
+      <script src="js/html5shiv.min.js"></script>
+    <![endif]-->
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href="." class="icon icon-home"> CIV Fuzzing Framework
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="./search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul class="current">
+                <li class="toctree-l1 current"><a class="reference internal current" href="#">CIV Fuzzing Framework</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#build">Build</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#high-level-overview">High-level overview</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#functions">Functions</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#msg_interface_init">msg_interface_init</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#msg_interface_set_message_type-and-msg_interface_set_message_types_batch">msg_interface_set_message_type and msg_interface_set_message_types_batch</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#msg_interface_set_endpoint">msg_interface_set_endpoint</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#msg_generate">msg_generate</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#eom-functions">EOM functions</a>
+        <ul>
+    <li class="toctree-l4"><a class="reference internal" href="#msg_interface_set_eom_type">msg_interface_set_eom_type</a>
+    </li>
+    <li class="toctree-l4"><a class="reference internal" href="#msg_generate_eom">msg_generate_eom</a>
+    </li>
+    <li class="toctree-l4"><a class="reference internal" href="#eom_counter_init-and-eom_counter_inc">eom_counter_init and eom_counter_inc</a>
+    </li>
+        </ul>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#input-format">Input format</a>
+    </li>
+    </ul>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href=".">CIV Fuzzing Framework</a>
+
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href="." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">CIV Fuzzing Framework</li>
+    <li class="wy-breadcrumbs-aside">
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+
+                <h1 id="civ-fuzzing-framework">CIV Fuzzing Framework<a class="headerlink" href="#civ-fuzzing-framework" title="Permanent link">&para;</a></h1>
+<p>This framework generates IPC messages for fuzzing OpenBSD privilege-separated
+programs. The harness runs the main compartment under test and sends messages
+in place of the unprivileged compartments through their IPC interfaces. The
+framework was used in <em>Characterizing and Detecting Bugs at the Interfaces of
+OpenBSD Privilege-Separated Programs</em>.</p>
+<h2 id="build">Build<a class="headerlink" href="#build" title="Permanent link">&para;</a></h2>
+<p>The message generator has two source files:</p>
+<pre><code class="language-text">msg_generator.c    # implementation
+msg_generator.h    # public declarations
+</code></pre>
+<p>Build each library in its source directory:</p>
+<pre><code class="language-sh">make libmsg_generator.a    # message generator
+make libbuffer_check.so    # detector
+</code></pre>
+<h2 id="high-level-overview">High-level overview<a class="headerlink" href="#high-level-overview" title="Permanent link">&para;</a></h2>
+<p>The example below shows a typical use of the framework in three steps:
+setup, generate messages, and send EOMs. It uses one initialized imsg channel.</p>
+<pre><code class="language-c">#include &quot;msg_generator.h&quot;
+
+struct msg_interface iface;
+struct msg_data msg;
+
+/* 1. Supply interface and protocol information. */
+msg_interface_init(&amp;iface, STDIN_FILENO, 1, N);
+msg_interface_set_message_types_batch(&amp;iface, 0, N, BASE_IMSG_TYPE);
+msg_interface_set_eom_type(&amp;iface, IMSG_EOM);
+msg_interface_set_endpoint(&amp;iface, 0, &amp;ibuf);
+
+/* 2. Generate and send messages until the input ends. */
+while (msg_generate(&amp;iface, &amp;msg) == MSG_GEN_SUCCESS) {
+    imsg_compose(&amp;ibuf, msg.type, 0, 0, msg.fd,
+        msg.payload, msg.actual_payload_size);
+    imsgbuf_flush(&amp;ibuf);
+}
+
+/* 3. Send an EOM after the input ends. */
+struct msg_data eom;
+if (msg_generate_eom(&amp;iface, 0, &amp;eom) == MSG_GEN_SUCCESS) {
+    imsg_compose(&amp;ibuf, eom.type, 0, 0, -1, NULL, 0);
+    imsgbuf_flush(&amp;ibuf);
+}
+</code></pre>
+<ol>
+<li><strong>Setup.</strong> Provide interface and protocol information in one shared
+   <code>struct msg_interface</code>.</li>
+<li><strong>Generate messages.</strong> Generate messages automatically in a loop and send
+   each one using the compartment's IPC functions.</li>
+<li><strong>Send EOMs.</strong> Signal the end of input so the run can terminate cleanly.</li>
+</ol>
+<p>We will discuss each step in detail below.</p>
+<h2 id="functions">Functions<a class="headerlink" href="#functions" title="Permanent link">&para;</a></h2>
+<p>All declarations below are in <code>msg_generator.h</code>.</p>
+<h3 id="msg_interface_init">msg_interface_init<a class="headerlink" href="#msg_interface_init" title="Permanent link">&para;</a></h3>
+<p>Initialize interface and protocol information.</p>
+<p><strong>Function signature</strong></p>
+<pre><code class="language-c">int msg_interface_init(struct msg_interface *iface, int fuzzer_fd,
+    uint8_t num_compartments, uint8_t num_message_types);
+</code></pre>
+<p><strong>Description</strong></p>
+<p>For each fuzzing campaign, <code>struct msg_interface</code> stores the interface and
+protocol information needed to generate messages. <code>msg_interface_init()</code>
+initializes this structure.</p>
+<p><strong>Parameters</strong></p>
+<ul>
+<li><code>iface</code>: Pointer to the structure to initialize.</li>
+<li><code>fuzzer_fd</code>: File descriptor supplying fuzzer input, usually <code>STDIN_FILENO</code>.</li>
+<li><code>num_compartments</code>: Number of unprivileged compartments replaced by the fuzzer.</li>
+<li><code>num_message_types</code>: Total number of valid RPC message types. Values from
+  1 through 255 specify that count; zero selects all 256 type indices.</li>
+</ul>
+<p><strong>Return values</strong></p>
+<p><code>MSG_GEN_SUCCESS</code> on success. <code>MSG_GEN_ERROR</code> if <code>iface</code> is <code>NULL</code>.</p>
+<h3 id="msg_interface_set_message_type-and-msg_interface_set_message_types_batch">msg_interface_set_message_type and msg_interface_set_message_types_batch<a class="headerlink" href="#msg_interface_set_message_type-and-msg_interface_set_message_types_batch" title="Permanent link">&para;</a></h3>
+<p>Map fuzzer type indices to the program's message types.</p>
+<p><strong>Function signature</strong></p>
+<pre><code class="language-c">int msg_interface_set_message_type(struct msg_interface *iface,
+    uint8_t index, int value);
+int msg_interface_set_message_types_batch(struct msg_interface *iface,
+    uint8_t starting_index, uint8_t count, int16_t offset);
+</code></pre>
+<p><strong>Description</strong></p>
+<p>Initialization supplies the number of message types. The framework also
+needs their concrete values to generate the correct message types. These
+values are usually defined in an enum: they may start at zero, start at
+another number, or have gaps. These functions map the fuzzer's type indices
+to those values for all endpoints in <code>msg_interface</code>.</p>
+<p>The type count and mapping let the generator choose valid RPC types so
+messages partly follow the protocol, as described in the paper. Call
+<code>msg_interface_init()</code> before setting type mappings or endpoints.</p>
+<ul>
+<li><code>msg_interface_set_message_type()</code> maps one <code>index</code> to <code>value</code>. Use it for
+  types with arbitrary values.</li>
+<li><code>msg_interface_set_message_types_batch()</code> maps <code>count</code> consecutive indices
+  from <code>starting_index</code>. Each index <code>i</code> maps to <code>i + offset</code>. Use it for
+  consecutive enum values.</li>
+</ul>
+<p>For example, a batch with <code>starting_index = 0</code>, <code>count = 3</code>, and <code>offset = 100</code>
+maps indices <code>0</code>, <code>1</code>, and <code>2</code> to types <code>100</code>, <code>101</code>, and <code>102</code>.</p>
+<p><strong>Return values</strong></p>
+<p><code>MSG_GEN_SUCCESS</code> on success. Both functions return <code>MSG_GEN_ERROR</code> if <code>iface</code>
+is <code>NULL</code>. The batch function also returns <code>MSG_GEN_ERROR</code> if
+<code>starting_index + count</code> exceeds 256.</p>
+<h3 id="msg_interface_set_endpoint">msg_interface_set_endpoint<a class="headerlink" href="#msg_interface_set_endpoint" title="Permanent link">&para;</a></h3>
+<p>Register a compartment interface endpoint.</p>
+<p><strong>Function signature</strong></p>
+<pre><code class="language-c">int msg_interface_set_endpoint(struct msg_interface *iface,
+    uint8_t compartment_id, void *endpoint);
+</code></pre>
+<p><strong>Description</strong></p>
+<p>A fuzzing campaign may have multiple endpoints when several unprivileged
+compartments are replaced by the fuzzer. In the paper, each unprivileged
+compartment has an endpoint for sending messages to the main compartment
+under test.
+<code>msg_interface_set_endpoint()</code> stores this information in <code>msg_interface</code>,
+one endpoint per call.</p>
+<p><strong>Parameters</strong></p>
+<ul>
+<li><code>iface</code>: Pointer to the initialized <code>msg_interface</code> structure.</li>
+<li><code>compartment_id</code>: User-defined ID for the unprivileged compartment assumed
+  compromised: the malicious side replaced by the fuzzer. Assign IDs from zero
+  through <code>num_compartments - 1</code>.</li>
+<li><code>endpoint</code>: Program-specific data used to send messages. This may be a
+  <code>struct imsgbuf *</code>, or a raw file descriptor stored as <code>(void *)(intptr_t)fd</code>.</li>
+</ul>
+<p><strong>Return values</strong></p>
+<p><code>MSG_GEN_SUCCESS</code> on success. <code>MSG_GEN_ERROR</code> if <code>iface</code> is <code>NULL</code>.</p>
+<h3 id="msg_generate">msg_generate<a class="headerlink" href="#msg_generate" title="Permanent link">&para;</a></h3>
+<p>Read one input record and build a message.</p>
+<p><strong>Function signature</strong></p>
+<pre><code class="language-c">int msg_generate(struct msg_interface *iface, struct msg_data *msg);
+</code></pre>
+<p><strong>Description</strong></p>
+<p><code>msg_generate()</code> is the main function of the framework. It uses the interface
+and protocol information set in <code>iface</code> during setup, together with fuzzer
+input, to generate one inter-compartment fuzzing message. It fills the
+<code>struct msg_data</code> passed as <code>msg</code> with the information needed to send the
+message.</p>
+<p><strong>Important fields in the output</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>compartment</code></td>
+<td>Compartment ID selecting the registered endpoint.</td>
+</tr>
+<tr>
+<td><code>endpoint</code></td>
+<td>The same endpoint value registered for this <code>compartment</code> ID with <code>msg_interface_set_endpoint()</code>; use it to send the message.</td>
+</tr>
+<tr>
+<td><code>type</code></td>
+<td>The program's RPC message type after applying the configured mapping.</td>
+</tr>
+<tr>
+<td><code>payload</code></td>
+<td>Message body to send.</td>
+</tr>
+<tr>
+<td><code>actual_payload_size</code></td>
+<td>Size of the payload.</td>
+</tr>
+<tr>
+<td><code>fd</code></td>
+<td>File descriptor to send, or <code>-1</code> if there is none.</td>
+</tr>
+<tr>
+<td><code>has_fd</code></td>
+<td>Whether the message includes a descriptor: 1 for yes, 0 for no.</td>
+</tr>
+<tr>
+<td><code>aux_data</code></td>
+<td>An additional 64 bytes the user can use for message fields the framework does not generate, such as a message ID.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Note:</strong> Some messages require a file descriptor (FD) to be sent with the
+message. In addition to the message payload, the framework generates both
+the FD itself and the data sent through it.</p>
+<p>If the input requests a descriptor, the function creates a UNIX socket
+preloaded with the FD data. Its peer is closed before the function returns,
+so the descriptor has no live peer for writes.</p>
+<p><strong>Return values</strong></p>
+<ul>
+<li><code>MSG_GEN_SUCCESS</code> — a message is ready.</li>
+<li><code>MSG_GEN_EOF</code> — the input has ended. Stop generating messages and break
+  out of the message-generation loop.</li>
+<li><code>MSG_GEN_ERROR</code> — <code>iface</code> or <code>msg</code> is <code>NULL</code>, the header could not be read in
+  full, or a socket operation failed.</li>
+</ul>
+<h3 id="eom-functions">EOM functions<a class="headerlink" href="#eom-functions" title="Permanent link">&para;</a></h3>
+<p>Most programs we fuzz are daemons. If fuzzing does not crash them, they may
+keep running after the fuzzer's input ends. We use a special RPC message
+type, EOM (end-of-message), to tell the receiving compartment to terminate
+normally after processing all fuzzer-generated messages.</p>
+<p>If the fuzzer replaces K unprivileged compartments, send one EOM through
+each endpoint after sending its generated messages. Once the receiving
+compartment has processed K EOMs, it has processed all the generated
+messages and can terminate normally instead of hanging.</p>
+<p>The framework generates the EOM messages. The framework user must implement
+the EOM handler in the receiving compartment and terminate the program
+after all expected EOMs arrive.</p>
+<h4 id="msg_interface_set_eom_type">msg_interface_set_eom_type<a class="headerlink" href="#msg_interface_set_eom_type" title="Permanent link">&para;</a></h4>
+<p>Set the type used for EOM markers.</p>
+<p><strong>Function signature</strong></p>
+<pre><code class="language-c">void msg_interface_set_eom_type(struct msg_interface *iface, int eom_type);
+</code></pre>
+<p><strong>Description</strong></p>
+<p><code>msg_interface_set_eom_type()</code> sets the message type used by
+<code>msg_generate_eom()</code>. Pass the program's actual EOM type value. The
+message-type mapping does not apply to EOMs. If <code>iface</code> is <code>NULL</code>, the function
+returns without changing anything.</p>
+<p><strong>Return values</strong></p>
+<p>None.</p>
+<h4 id="msg_generate_eom">msg_generate_eom<a class="headerlink" href="#msg_generate_eom" title="Permanent link">&para;</a></h4>
+<p>Build an EOM marker for one compartment ID.</p>
+<p><strong>Function signature</strong></p>
+<pre><code class="language-c">int msg_generate_eom(struct msg_interface *iface, uint8_t compartment_id,
+    struct msg_data *msg);
+</code></pre>
+<p><strong>Description</strong></p>
+<p><code>msg_generate_eom()</code> clears <code>msg</code> and sets its compartment ID, endpoint, and
+EOM type. The message has no payload and <code>msg.fd</code> is <code>-1</code>. It reads no fuzzer
+input.</p>
+<p>After input ends, call this function once for each registered channel and send
+the returned message through <code>msg.endpoint</code>.</p>
+<p><strong>Return values</strong></p>
+<p><code>MSG_GEN_SUCCESS</code> on success. <code>MSG_GEN_ERROR</code> if <code>iface</code> or <code>msg</code> is <code>NULL</code>, or
+if <code>compartment_id</code> is greater than or equal to <code>num_compartments</code>.</p>
+<h4 id="eom_counter_init-and-eom_counter_inc">eom_counter_init and eom_counter_inc<a class="headerlink" href="#eom_counter_init-and-eom_counter_inc" title="Permanent link">&para;</a></h4>
+<p>Count received EOMs and exit when the expected count is reached.</p>
+<p><strong>Function signature</strong></p>
+<pre><code class="language-c">void eom_counter_init(int expected_eom);
+void eom_counter_inc(void);
+</code></pre>
+<p><strong>Description</strong></p>
+<p><code>eom_counter_init()</code> sets the expected EOM count and resets the received count
+to zero. <code>eom_counter_inc()</code> adds one to the received count. If the expected
+count is positive and the received count reaches it, the function calls
+<code>exit(0)</code>.</p>
+<p>Use these functions in the receiving process. Initialize the count to the
+number of EOMs that process expects, then call <code>eom_counter_inc()</code> when it
+receives an EOM. <code>msg_interface_init()</code> also initializes the counter in the
+process that calls it.</p>
+<p>The counter is global to each process. Separate processes have separate
+counters, and threads share the same counter without synchronization.</p>
+<p><strong>Return values</strong></p>
+<p>None. <code>eom_counter_inc()</code> exits the process when the expected count is reached.</p>
+<h2 id="input-format">Input format<a class="headerlink" href="#input-format" title="Permanent link">&para;</a></h2>
+<p>Each record contains a 73-byte header, followed by the payload and optional FD
+data. Two-byte fields use host byte order. The current decoder assumes a
+little-endian host.</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;">Offset</th>
+<th style="text-align: right;">Bytes</th>
+<th>Field</th>
+<th>How it is used</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">1</td>
+<td>compartment</td>
+<td>Reduced modulo <code>num_compartments</code> when nonzero.</td>
+</tr>
+<tr>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">1</td>
+<td>instance</td>
+<td>Reserved; unchanged.</td>
+</tr>
+<tr>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">1</td>
+<td>type</td>
+<td>Reduced modulo <code>num_message_types</code> when nonzero, then mapped.</td>
+</tr>
+<tr>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">2</td>
+<td>size</td>
+<td>Payload length, reduced modulo 8192.</td>
+</tr>
+<tr>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">1</td>
+<td>has_fd</td>
+<td>Reduced modulo 2.</td>
+</tr>
+<tr>
+<td style="text-align: right;">6</td>
+<td style="text-align: right;">1</td>
+<td>fd_perm</td>
+<td><code>(value % 3) + 1</code>: read, write, or both.</td>
+</tr>
+<tr>
+<td style="text-align: right;">7</td>
+<td style="text-align: right;">2</td>
+<td>fd_data_len</td>
+<td>FD-data length, reduced modulo 8192.</td>
+</tr>
+<tr>
+<td style="text-align: right;">9</td>
+<td style="text-align: right;">64</td>
+<td>aux_data</td>
+<td>Harness-specific metadata; unchanged.</td>
+</tr>
+</tbody>
+</table>
+<p>Payload and FD-data lengths range from 0 through 8191 bytes
+(<code>MAX_MESSAGE_LENGTH - 1</code>). After the header, the generator reads <code>size</code>
+payload bytes. If <code>has_fd</code> is set, it then reads <code>fd_data_len</code> bytes to place in
+the generated descriptor.</p>
+<p>An incomplete header is an error, including an incomplete <code>aux_data</code> block.
+A short payload or FD-data block returns a message on the current call and EOF
+on the next call.</p>
+
+            </div>
+          </div><footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+
+
+
+  </span>
+</div>
+    <script src="js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = ".";</script>
+    <script src="js/theme_extra.js"></script>
+    <script src="js/theme.js"></script>
+      <script src="assets/highlight.min.js"></script>
+      <script src="assets/highlight-init.js"></script>
+      <script src="search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>
+
+<!--
+MkDocs version : 1.6.1
+Build Date UTC : 2026-09-19 09:57:34.895752+00:00
+-->

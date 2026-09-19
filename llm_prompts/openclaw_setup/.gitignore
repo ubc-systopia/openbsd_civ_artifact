@@ -1,0 +1,4 @@
+openclaw.env
+vms/downloads/
+vms/*/disk.qcow2
+vms/*/seed.iso

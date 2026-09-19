@@ -1,0 +1,20 @@
+site_name: CIV Fuzzing Framework
+site_description: The message generator library used by the CIV fuzzing harnesses.
+docs_dir: docs
+
+theme:
+  name: readthedocs
+  highlightjs: false
+
+extra_css:
+  - assets/github.min.css
+
+extra_javascript:
+  - assets/highlight.min.js
+  - assets/highlight-init.js
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true

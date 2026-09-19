@@ -1,0 +1,4 @@
+#ifndef RADIUSD_COMPAT_LOGIN_CAP_H
+#define RADIUSD_COMPAT_LOGIN_CAP_H
+
+#endif

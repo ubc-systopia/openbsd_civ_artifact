@@ -1,0 +1,35 @@
+<domain type='kvm'>
+  <!-- @@DISK_IMAGE@@ and @@EMULATOR@@ are filled in at boot by connect.sh
+       (from the script's own location); do not hard-code absolute paths here.
+       To boot by hand: sed -e "s#@@DISK_IMAGE@@#$PWD/civ-artifact-freebsd-14.2.qcow2#" \
+       -e "s#@@EMULATOR@@#$(command -v qemu-system-x86_64)#" civ-artifact.libvirt.xml | virsh -c qemu:///system create /dev/stdin -->
+  <name>civ-artifact</name>
+  <memory unit='MiB'>8192</memory>
+  <vcpu>16</vcpu>
+  <os>
+    <type arch='x86_64' machine='pc'>hvm</type>
+    <boot dev='hd'/>
+  </os>
+  <features><acpi/><apic/></features>
+  <cpu mode='host-passthrough'/>
+  <clock offset='utc'/>
+  <on_poweroff>destroy</on_poweroff>
+  <on_reboot>restart</on_reboot>
+  <on_crash>destroy</on_crash>
+  <devices>
+    <emulator>@@EMULATOR@@</emulator>
+    <disk type='file' device='disk'>
+      <driver name='qemu' type='qcow2'/>
+      <source file='@@DISK_IMAGE@@'/>
+      <target dev='vda' bus='virtio'/>
+    </disk>
+    <interface type='network'>
+      <source network='default'/>
+      <model type='virtio'/>
+    </interface>
+    <serial type='pty'><target port='0'/></serial>
+    <console type='pty'><target type='serial' port='0'/></console>
+    <graphics type='vnc' port='-1' autoport='yes' listen='127.0.0.1'/>
+    <memballoon model='virtio'/>
+  </devices>
+</domain>

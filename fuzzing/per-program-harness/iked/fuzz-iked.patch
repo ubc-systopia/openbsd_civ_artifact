@@ -1,0 +1,190 @@
+--- a/iked/iked.c	2026-05-01 22:19:16.930509000 -0700
++++ b/iked/iked.c	2026-05-01 22:00:55.439888000 -0700
+@@ -46,6 +46,8 @@
+ #include "apparmor.h"
+ #endif
+ 
++#include <msg_generator.h>
++
+ __dead void usage(void);
+ 
+ /* Saves a copy of argv for setproctitle emulation */
+@@ -259,6 +261,60 @@
+ 
+ 	proc_connect(ps, parent_connected);
+ 
++	{
++		/* FUZZ: drive each child compartment from stdin via libmsg_generator.
++		 * Compartment 0 = control, 1 = cert (CA), 2 = ikev2.  After stdin
++		 * is exhausted, dispatch one IMSG_END_OF_MSGS per compartment so
++		 * eom_counter_inc() in the receivers exits cleanly. */
++		struct imsgbuf		 ctl_ibuf, cert_ibuf, ikev2_ibuf;
++		struct msg_interface	 iface;
++		struct msg_data		 msg;
++		int			 ctl_fd, cert_fd, ikev2_fd;
++		uint8_t			 i;
++
++		ctl_fd = ps->ps_pipes[PROC_CONTROL][0].pp_pipes[PROC_PARENT][0];
++		cert_fd = ps->ps_pipes[PROC_CERT][0].pp_pipes[PROC_PARENT][0];
++		ikev2_fd = ps->ps_pipes[PROC_IKEV2][0].pp_pipes[PROC_PARENT][0];
++		imsgbuf_init(&ctl_ibuf, ctl_fd);
++		imsgbuf_init(&cert_ibuf, cert_fd);
++		imsgbuf_init(&ikev2_ibuf, ikev2_fd);
++
++		if (msg_interface_init(&iface, STDIN_FILENO, 3,
++		    IMSG_TYPE_COUNT) != MSG_GEN_SUCCESS)
++			fatalx("msg_interface_init failed");
++		msg_interface_set_endpoint(&iface, 0, &ctl_ibuf);
++		msg_interface_set_endpoint(&iface, 1, &cert_ibuf);
++		msg_interface_set_endpoint(&iface, 2, &ikev2_ibuf);
++		msg_interface_set_eom_type(&iface, IMSG_END_OF_MSGS);
++
++		while (msg_generate(&iface, &msg) == MSG_GEN_SUCCESS) {
++			struct imsgbuf	*target = (struct imsgbuf *)msg.endpoint;
++			uint32_t	 peerid = *(uint32_t *)&msg.aux_data[0];
++			uint32_t	 peerpid = *(uint32_t *)&msg.aux_data[4];
++
++			if (target == NULL)
++				continue;
++			imsg_compose(target, msg.type, peerid, peerpid,
++			    msg.has_fd ? msg.fd : -1,
++			    msg.payload, msg.actual_payload_size);
++			imsgbuf_flush(target);
++		}
++
++		for (i = 0; i < iface.num_compartments; i++) {
++			struct msg_data	 eom_msg;
++			struct imsgbuf	*target;
++
++			if (msg_generate_eom(&iface, i, &eom_msg) !=
++			    MSG_GEN_SUCCESS)
++				continue;
++			target = (struct imsgbuf *)eom_msg.endpoint;
++			if (target == NULL)
++				continue;
++			imsg_compose(target, eom_msg.type, 0, 0, -1, NULL, 0);
++			imsgbuf_flush(target);
++		}
++	}
++
+ 	event_dispatch();
+ 
+ 	log_debug("%d parent exiting", getpid());
+@@ -477,6 +533,9 @@
+ 	case IMSG_OCSP_FD:
+ 		ocsp_connect(env, imsg);
+ 		break;
++	case IMSG_END_OF_MSGS:
++		eom_counter_inc();	/* FUZZ */
++		break;
+ 	default:
+ 		return (-1);
+ 	}
+@@ -516,6 +575,9 @@
+ 
+ 		/* return 1 to let proc.c handle it locally */
+ 		return (1);
++	case IMSG_END_OF_MSGS:
++		eom_counter_inc();	/* FUZZ */
++		break;
+ 	default:
+ 		return (-1);
+ 	}
+@@ -542,6 +604,9 @@
+ 	case IMSG_VROUTE_CLONE:
+ 		return (vroute_getcloneroute(env, imsg));
+ #endif
++	case IMSG_END_OF_MSGS:
++		eom_counter_inc();	/* FUZZ */
++		break;
+ 	default:
+ 		return (-1);
+ 	}
+--- a/iked/proc.c	2026-05-01 22:19:16.932830000 -0700
++++ b/iked/proc.c	2026-05-01 22:00:04.909333000 -0700
+@@ -116,6 +116,8 @@
+ 			snprintf(num, sizeof(num), "%u", i);
+ 
+ 			fd = ps->ps_pipes[p->p_id][i].pp_pipes[PROC_PARENT][0];
++#if 0	/* FUZZ: keep both ends of the pipe in the parent so the harness
++	 * can drive each child compartment from stdin. */
+ 			ps->ps_pipes[p->p_id][i].pp_pipes[PROC_PARENT][0] = -1;
+ 
+ 			switch (fork()) {
+@@ -139,6 +141,7 @@
+ 				close(fd);
+ 				break;
+ 			}
++#endif
+ 		}
+ 	}
+ 	free(nargv);
+--- a/iked/types.h	2026-05-01 22:19:16.933078000 -0700
++++ b/iked/types.h	2026-05-01 21:59:56.604204000 -0700
+@@ -133,6 +133,8 @@
+ 	IMSG_CTL_SHOW_STATS,
+ 	IMSG_CTL_PROCFD,
+ 	IMSG_CTL_PROCREADY,
++	IMSG_TYPE_COUNT,	/* FUZZ: count of real types, used by msg_generator */
++	IMSG_END_OF_MSGS	/* FUZZ: end-of-message marker for harness */
+ };
+ 
+ enum privsep_procid {
+--- a/iked/CMakeLists.txt	2026-05-01 22:19:16.929081000 -0700
++++ b/iked/CMakeLists.txt	2026-05-01 22:50:29.984529000 -0700
+@@ -45,8 +45,13 @@
+ set(INC_DIRS
+ 	${CMAKE_CURRENT_SOURCE_DIR}
+ 	${CMAKE_CURRENT_SOURCE_DIR}/../iked
++	$ENV{BUFFER_CHECKER_ROOT}
+ )
+ 
++# FUZZ: bake -fsanitize-recover=memory into CFLAGS so MSan can continue past
++# the first uninit hit instead of aborting every AFL test case.
++list(APPEND CFLAGS -fsanitize-recover=memory)
++
+ add_library(iked-shared OBJECT
+ 	ikev2_pld.c
+ 	imsg_util.c
+@@ -129,6 +134,14 @@
+ 	ssl
+ 	compat
++	openbsd-imsg
+ 	iked-shared
++	# FUZZ: structured-input helper (static archive) and runtime
++	# pointer-leak detector (shared object).  -lexecinfo is needed on
++	# FreeBSD because AFL++'s afl-compiler-rt.o references backtrace().
++	$ENV{BUFFER_CHECKER_ROOT}/libmsg_generator.a
++	-L$ENV{BUFFER_CHECKER_ROOT}
++	-lbuffer_check
++	-lexecinfo
+ )
+ 
+ if (WITH_SYSTEMD)
+--- a/compat/CMakeLists.txt
++++ b/compat/CMakeLists.txt
+@@ -43,11 +43,14 @@
+ 	list(APPEND SRCS ${IKED_COMPAT}/getopt_long.c)
+ endif()
+ if(NOT HAVE_IMSG_H OR NOT HAVE_MSGBUF_NEW_READER)
+-	list(APPEND SRCS
+-		# imsg
++	add_library(openbsd-imsg SHARED
+ 		${IKED_COMPAT}/imsg.c
+ 		${IKED_COMPAT}/imsg-buffer.c
+ 	)
++	target_include_directories(openbsd-imsg PUBLIC .)
++else()
++	add_library(openbsd-imsg INTERFACE)
++	target_link_libraries(openbsd-imsg INTERFACE util)
+ endif()
+ if(NOT HAVE_STRLCPY)
+ 	list(APPEND SRCS ${IKED_COMPAT}/strlcpy.c)
+@@ -101,6 +104,7 @@ if(SRCS)
+ 	add_library(compat OBJECT ${SRCS})
+ 	target_compile_options(compat PRIVATE ${CFLAGS})
+ 	target_include_directories(compat PUBLIC .)
++	target_link_libraries(compat PUBLIC openbsd-imsg)
+ else()
+ 	add_library(compat INTERFACE)
+ 	target_include_directories(compat INTERFACE .)

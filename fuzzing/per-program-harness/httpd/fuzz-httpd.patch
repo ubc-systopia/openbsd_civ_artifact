@@ -1,0 +1,298 @@
+diff -ruN -x .git -x '*.orig' -x '*.rej' a/libimsg/src/lib/libutil/Makefile b/libimsg/src/lib/libutil/Makefile
+--- a/libimsg/src/lib/libutil/Makefile	2026-09-18 02:58:56.376251352 +0200
++++ b/libimsg/src/lib/libutil/Makefile	2026-09-18 02:58:56.388667786 +0200
+@@ -3,6 +3,7 @@
+ LOCALBASE?=	/usr/local
+ SHAREDIR?=	/usr/local
+ LIB=		imsg
++SHLIB_MAJOR=	0
+ LIBDIR=		${LOCALBASE}/lib
+ INCSDIR=	${LOCALBASE}/include
+ CFLAGS+=	-Werror -Wstrict-prototypes -I${.CURDIR}
+diff -ruN -x .git -x '*.orig' -x '*.rej' a/src/usr.sbin/httpd/config.c b/src/usr.sbin/httpd/config.c
+--- a/src/usr.sbin/httpd/config.c	2026-09-18 02:58:56.336245981 +0200
++++ b/src/usr.sbin/httpd/config.c	2026-09-18 02:58:56.388807028 +0200
+@@ -187,6 +187,7 @@
+ 
+ 		memcpy(&s, &srv->srv_conf, sizeof(s));
+ 
++
+ 		c = 0;
+ 		iov[c].iov_base = &s;
+ 		iov[c++].iov_len = sizeof(s);
+@@ -205,8 +206,10 @@
+ 					fd = -1;
+ 				else if ((fd = dup(srv->srv_s)) == -1)
+ 					return (-1);
++
++
+ 				if (proc_composev_imsg(ps, id, n,
+-				    IMSG_CFG_SERVER, -1, fd, iov, c) != 0) {
++				    IMSG_CFG_SERVER, -1, -1, iov, c) != 0) {
+ 					log_warn("%s: failed to compose "
+ 					    "IMSG_CFG_SERVER imsg for `%s'",
+ 					    __func__, srv->srv_conf.name);
+diff -ruN -x .git -x '*.orig' -x '*.rej' a/src/usr.sbin/httpd/httpd.c b/src/usr.sbin/httpd/httpd.c
+--- a/src/usr.sbin/httpd/httpd.c	2026-09-18 02:58:56.337245989 +0200
++++ b/src/usr.sbin/httpd/httpd.c	2026-09-18 02:58:56.388917265 +0200
+@@ -44,6 +44,7 @@
+ 
+ #include "httpd.h"
+ #include "getdtablecount.h"
++#include "msg_generator.h"
+ 
+ #define MAXIMUM(a, b)	(((a) > (b)) ? (a) : (b))
+ 
+@@ -113,6 +114,7 @@
+ 	exit(1);
+ }
+ 
++
+ int
+ main(int argc, char *argv[])
+ {
+@@ -266,6 +268,58 @@
+ 	if (parent_configure(env) == -1)
+ 		fatalx("configuration failed");
+ 
++
++	///////
++
++
++	struct imsgbuf server_ibuf;
++	int server_fd = ps->ps_pipes[PROC_SERVER][0].pp_pipes[PROC_PARENT][0];
++	imsg_init(&server_ibuf, server_fd);
++
++	struct imsgbuf logger_ibuf;
++	int logger_fd = ps->ps_pipes[PROC_LOGGER][0].pp_pipes[PROC_PARENT][0];
++	imsg_init(&logger_ibuf, logger_fd);
++
++	/* Initialize the message generator interface:
++	 * 2 compartments (0=server, 1=logger), 22 message types (IMSG_NONE..IMSG_EOM) */
++	struct msg_interface iface;
++	if (msg_interface_init(&iface, STDIN_FILENO, 2, 22) != MSG_GEN_SUCCESS)
++		errx(1, "Failed to initialize message interface");
++
++	msg_interface_set_endpoint(&iface, 0, &server_ibuf);
++	msg_interface_set_endpoint(&iface, 1, &logger_ibuf);
++	msg_interface_set_eom_type(&iface, IMSG_EOM);
++
++	/* Generate and send messages until fuzzer input is exhausted */
++	struct msg_data msg;
++	int ret;
++
++	while ((ret = msg_generate(&iface, &msg)) == MSG_GEN_SUCCESS) {
++		struct imsgbuf *target_ibuf = (struct imsgbuf *)msg.endpoint;
++
++		if (target_ibuf != NULL) {
++			imsg_compose(target_ibuf, msg.type, 0, 0,
++			    msg.has_fd ? msg.fd : -1,
++			    msg.payload, msg.actual_payload_size);
++			imsg_flush(target_ibuf);
++		}
++	}
++
++	/* Send EOM to all compartments */
++	for (uint8_t i = 0; i < iface.num_compartments; i++) {
++		struct msg_data eom_msg;
++		if (msg_generate_eom(&iface, i, &eom_msg) == MSG_GEN_SUCCESS) {
++			struct imsgbuf *target = (struct imsgbuf *)eom_msg.endpoint;
++			if (target != NULL) {
++				imsg_compose(target, eom_msg.type, 0, 0, -1, NULL, 0);
++				imsg_flush(target);
++			}
++		}
++	}
++
++
++	///////
++
+ 	event_dispatch();
+ 
+ 	parent_shutdown(env);
+@@ -420,6 +474,10 @@
+ 	case IMSG_CFG_DONE:
+ 		parent_configure_done(env);
+ 		break;
++	case IMSG_EOM:
++		eom_counter_inc();
++		break;
++
+ 	default:
+ 		return (-1);
+ 	}
+@@ -460,6 +518,9 @@
+ 		if (logger_open_priv(imsg) == -1)
+ 			fatalx("failed to open log file");
+ 		break;
++	case IMSG_EOM:
++		eom_counter_inc();
++		break;
+ 	default:
+ 		return (-1);
+ 	}
+diff -ruN -x .git -x '*.orig' -x '*.rej' a/src/usr.sbin/httpd/httpd.h b/src/usr.sbin/httpd/httpd.h
+--- a/src/usr.sbin/httpd/httpd.h	2026-09-18 02:58:56.337245989 +0200
++++ b/src/usr.sbin/httpd/httpd.h	2026-09-18 02:58:56.389012264 +0200
+@@ -222,7 +222,8 @@
+ 	IMSG_LOG_ACCESS,
+ 	IMSG_LOG_ERROR,
+ 	IMSG_LOG_OPEN,
+-	IMSG_TLSTICKET_REKEY
++	IMSG_TLSTICKET_REKEY,
++	IMSG_EOM
+ };
+ 
+ enum privsep_procid {
+diff -ruN -x .git -x '*.orig' -x '*.rej' a/src/usr.sbin/httpd/Makefile b/src/usr.sbin/httpd/Makefile
+--- a/src/usr.sbin/httpd/Makefile	2026-09-18 02:58:56.336245981 +0200
++++ b/src/usr.sbin/httpd/Makefile	2026-09-18 02:58:56.388737327 +0200
+@@ -16,17 +16,21 @@
+ 
+ MAN=		httpd.8 httpd.conf.5
+ 
+-LDADD=		../../../libevent/src/lib/libevent/libevent.a \
+-		../../../libimsg/src/lib/libutil/libimsg.a
+-LDADD+= 	/usr/local/lib/libtls.a \
+-		/usr/local/lib/libssl.a \
+-		/usr/local/lib/libcrypto.a
+-LDADD+= 	-lcrypt -lprocstat -pthread
++LDFLAGS+=	-L${.CURDIR}/../../../libimsg/src/lib/libutil -Wl,-rpath,${.CURDIR}/../../../libimsg/src/lib/libutil
++LDFLAGS+=	-L${LOCALBASE}/lib -Wl,-rpath,${LOCALBASE}/lib
++
++LDADD=		${BUFFER_CHECKER_ROOT}/libmsg_generator.a
++LDADD+=		../../../libevent/src/lib/libevent/libevent.a \
++		../../../libimsg/src/lib/libutil/libimsg.so
++LDADD+= 	-ltls \
++		-lssl \
++		-lcrypto
++LDADD+= 	-lcrypt -lprocstat -pthread -lmd
++LDADD+= 	-L${BUFFER_CHECKER_ROOT} -lbuffer_check
+ SRCS+=		patterns.c
+ MAN+=		patterns.7
+ 
+ DPADD=		${LIBTLS} ${LIBSSL} ${LIBCRYPTO}
+-#DEBUG=		-g -DDEBUG=3 -O0
+ CFLAGS+=	-Wall -I${.CURDIR}
+ CFLAGS+=	-Wstrict-prototypes -Wmissing-prototypes
+ CFLAGS+=	-Wmissing-declarations
+@@ -35,7 +39,9 @@
+ CFLAGS+=	-I${.CURDIR}/../../../libevent/src/lib/libevent \
+ 		-I${.CURDIR}/../../../libimsg/src/lib/libutil \
+ 		-I${.CURDIR}/../../include \
+-		-I${LOCALBASE}/include
++		-I${LOCALBASE}/include \
++		-I${BUFFER_CHECKER_ROOT}
++CFLAGS+=	-fsanitize-recover=memory
+ CFLAGS+=	-D__dead='' \
+ 		-DHAVE_CONFIG_H
+ CLEANFILES+=	y.tab.h
+diff -ruN -x .git -x '*.orig' -x '*.rej' a/src/usr.sbin/httpd/proc.c b/src/usr.sbin/httpd/proc.c
+--- a/src/usr.sbin/httpd/proc.c	2026-09-18 02:58:56.338245998 +0200
++++ b/src/usr.sbin/httpd/proc.c	2026-09-18 02:58:56.389282943 +0200
+@@ -111,8 +111,9 @@
+ 			snprintf(num, sizeof(num), "%u", i);
+ 
+ 			fd = ps->ps_pipes[p->p_id][i].pp_pipes[PROC_PARENT][0];
+-			ps->ps_pipes[p->p_id][i].pp_pipes[PROC_PARENT][0] = -1;
++			// ps->ps_pipes[p->p_id][i].pp_pipes[PROC_PARENT][0] = -1;
+ 
++#if 0
+ 			switch (fork()) {
+ 			case -1:
+ 				fatal("%s: fork", __func__);
+@@ -148,6 +149,7 @@
+ 				close(fd);
+ 				break;
+ 			}
++#endif
+ 		}
+ 	}
+ 	free(nargv);
+@@ -225,6 +227,7 @@
+ 					fatal("%s: socketpair", __func__);
+ 
+ 				pa->pp_pipes[dst][proc] = fds[0];
++				
+ 				pb->pp_pipes[PROC_PARENT][0] = fds[1];
+ 			}
+ 		}
+@@ -257,6 +260,9 @@
+ 	struct privsep_pipes	*pp = ps->ps_pp;
+ 	struct imsgev		*iev;
+ 
++	if (dst != 0 || n != 0)
++		exit(-1);
++
+ 	if (ps->ps_ievs[dst] == NULL) {
+ #if DEBUG > 1
+ 		log_debug("%s: %s src %d %d to dst %d %d not connected",
+@@ -268,6 +274,7 @@
+ 		return;
+ 	}
+ 
++
+ 	if (pp->pp_pipes[dst][n] != -1) {
+ 		log_warnx("%s: duplicated descriptor", __func__);
+ 		close(fd);
+@@ -423,6 +430,7 @@
+ 
+ 			pf.pf_procid = src;
+ 			pf.pf_instance = i;
++
+ 			if (proc_compose_imsg(ps, dst, j, IMSG_CTL_PROCFD,
+ 			    -1, pb->pp_pipes[src][i], &pf, sizeof(pf)) == -1)
+ 				fatal("%s: proc_compose_imsg", __func__);
+@@ -642,7 +650,7 @@
+ 		if (n == 0)
+ 			break;
+ 
+-#if DEBUG > 1
++#if 0
+ 		log_debug("%s: %s %d got imsg %d peerid %d from %s %d",
+ 		    __func__, title, ps->ps_instance + 1,
+ 		    imsg.hdr.type, imsg.hdr.peerid, p->p_title, imsg.hdr.pid);
+@@ -780,10 +788,11 @@
+ 	int	 m;
+ 
+ 	proc_range(ps, id, &n, &m);
+-	for (; n < m; n++)
++	for (; n < m; n++) {
+ 		if (imsg_composev_event(&ps->ps_ievs[id][n],
+ 		    type, peerid, ps->ps_instance + 1, fd, iov, iovcnt) == -1)
+ 			return (-1);
++	}
+ 
+ 	return (0);
+ }
+@@ -825,20 +834,14 @@
+ int
+ proc_flush_imsg(struct privsep *ps, enum privsep_procid id, int n)
+ {
+-	struct imsgbuf	*ibuf;
+-	int		 m, ret = 0;
+-
+-	proc_range(ps, id, &n, &m);
+-	for (; n < m; n++) {
+-		if ((ibuf = proc_ibuf(ps, id, n)) == NULL)
+-			return (-1);
+-		do {
+-			ret = imsg_flush(ibuf);
+-		} while (ret == -1 && errno == EAGAIN);
+-		if (ret == -1)
+-			break;
+-		imsg_event_add(&ps->ps_ievs[id][n]);
+-	}
+-
+-	return (ret);
++	/*
++	 * Harness: skip the imsg_flush retry loop entirely.  In the
++	 * single-process fuzzing build the parent and "child" compartments
++	 * share the same socketpair, so a synchronous flush here would
++	 * just deadlock against itself.
++	 */
++	(void)ps;
++	(void)id;
++	(void)n;
++	return (0);
+ }
