@@ -68,6 +68,6 @@ To set up the OpenClaw auditing environment:
 
 1. Go to `llm_prompts/openclaw_setup/` and add your Claude API key to `openclaw.env`.
 2. Run `./install-openclaw.sh`. The script installs OpenClaw and configures it to use Sonnet 4.6.
-3. Clone the OpenBSD 7.6 source tree into the agent workspace: `git clone https://github.com/openbsd/src.git ~/openclaw-workspace/src && git -C ~/openclaw-workspace/src checkout --detach 2dcab2a61d4c1ba4c2614f49c361fb01d01fb125`. Then copy the selected prompt and its required PDF inputs into `~/openclaw-workspace`.
+3. Export the OpenBSD 7.6 source tree into the agent workspace using CVS: `mkdir -p ~/openclaw-workspace && cd ~/openclaw-workspace && cvs -qd anoncvs@anoncvs.eu.openbsd.org:/cvs export -rOPENBSD_7_6_BASE -d src src`. Then copy the selected prompt and its required PDF inputs into `~/openclaw-workspace`.
 4. Run `openclaw tui` to open the interactive chat interface.
 5. Ask OpenClaw to follow one of the prompts. Each prompt performs a different analysis. Wait for OpenClaw to write its final report.
